@@ -422,6 +422,145 @@ export function resetUsageCache(): void {
 }
 
 /**
+ * Where Claude Code exchanges a refresh token for a new access token.
+ *
+ * Not documented, and not guessed either — read out of the CLI's own shipped
+ * code (`2.1.228`, static strings): `TOKEN_URL` resolves to
+ * `https://platform.claude.com/v1/oauth/token`, and `CLIENT_ID` next to it is
+ * `9d1c250a-e61b-44d9-88ed-5944d1962f5e`, the same id the sign-in flow in
+ * `account-login.ts` connects to. Both endpoints belong to one client.
+ */
+const TOKEN_URL = 'https://platform.claude.com/v1/oauth/token'
+const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
+
+/** Refresh ahead of the deadline, not at it — a request in flight when the
+ * clock ticks over must not itself read as expired. */
+const EXPIRY_SLACK_MS = 60_000
+
+/** One refresh in flight per credentials file, so two callers racing the same
+ * expired token do not both spend the refresh token at once. */
+const refreshing = new Map<string, Promise<RefreshResult>>()
+
+interface OauthFields {
+  accessToken?: string
+  expiresAt?: number
+  refreshToken?: string
+  refreshTokenExpiresAt?: number
+  subscriptionType?: string
+  rateLimitTier?: string
+}
+
+/**
+ * What came back, in the two shapes that matter to the caller.
+ *
+ * Not a single `null` for every kind of failure. Anthropic's own answer is
+ * what decides whether a sign-in is actually dead — `refreshTokenExpiresAt`
+ * is a number this app wrote down once and could simply be wrong, wrong being
+ * a clock that drifted or a token the server chose to extend. `denied` is the
+ * server saying no; `unreachable` is everything else, from a dropped
+ * connection to a 500, and neither is a reason to send someone to sign in
+ * again.
+ */
+type RefreshResult = { ok: true; token: string } | { ok: false; reason: 'denied' | 'unreachable' }
+
+/**
+ * Exchanges the refresh token for a new access token and writes it back to the
+ * credentials file — the same file Claude Code itself reads and refreshes.
+ *
+ * Every other key in the file is carried through untouched. It holds more
+ * than this one account's OAuth material — `mcpOAuth` entries for whatever
+ * else is connected — and only `claudeAiOauth` is this function's to change.
+ * Written aside and renamed, so a crash mid-write cannot leave a half file,
+ * and given the mode Claude Code itself creates it with: a plain rename would
+ * otherwise hand a credentials file to the process umask instead.
+ */
+async function refreshCredentials(file: string): Promise<RefreshResult> {
+  const existing = refreshing.get(file)
+  if (existing) return existing
+
+  const attempt = (async (): Promise<RefreshResult> => {
+    let raw: Record<string, unknown>
+    let oauth: OauthFields
+    try {
+      raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
+      oauth = (raw.claudeAiOauth as OauthFields | undefined) ?? {}
+    } catch {
+      return { ok: false, reason: 'unreachable' }
+    }
+    // Nothing to even try refreshing with is not a rejection from Anthropic.
+    if (!oauth.refreshToken) return { ok: false, reason: 'unreachable' }
+
+    let res: Response
+    try {
+      res = await fetch(TOKEN_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          grant_type: 'refresh_token',
+          refresh_token: oauth.refreshToken,
+          client_id: CLIENT_ID
+        })
+      })
+    } catch {
+      return { ok: false, reason: 'unreachable' }
+    }
+    // A rejected grant is the one answer that means the sign-in itself is
+    // gone rather than the network having a bad moment. 400 and 401 are what
+    // an OAuth token endpoint returns for `invalid_grant` — a revoked or
+    // already-superseded refresh token — and 403 for one Anthropic will not
+    // honour at all. Anything else unsuccessful (5xx, a stray 429) is the
+    // server having trouble, not a verdict on the sign-in.
+    if (res.status === 400 || res.status === 401 || res.status === 403) {
+      return { ok: false, reason: 'denied' }
+    }
+    if (!res.ok) return { ok: false, reason: 'unreachable' }
+
+    let body: {
+      access_token?: string
+      refresh_token?: string
+      expires_in?: number
+      refresh_token_expires_in?: number
+    }
+    try {
+      body = (await res.json()) as typeof body
+    } catch {
+      return { ok: false, reason: 'unreachable' }
+    }
+    if (!body.access_token) return { ok: false, reason: 'unreachable' }
+
+    const now = Date.now()
+    const nextOauth: OauthFields = {
+      ...oauth,
+      accessToken: body.access_token,
+      expiresAt: body.expires_in ? now + body.expires_in * 1000 : oauth.expiresAt,
+      // A server that does not rotate the refresh token does not resend one;
+      // the one already on disk is still the current one in that case.
+      refreshToken: body.refresh_token ?? oauth.refreshToken,
+      refreshTokenExpiresAt: body.refresh_token_expires_in
+        ? now + body.refresh_token_expires_in * 1000
+        : oauth.refreshTokenExpiresAt
+    }
+
+    try {
+      const tmp = `${file}.tmp`
+      fs.writeFileSync(tmp, JSON.stringify({ ...raw, claudeAiOauth: nextOauth }, null, 2), {
+        mode: 0o600
+      })
+      fs.renameSync(tmp, file)
+    } catch {
+      // The refresh worked even if the write did not; the new token is still
+      // good for this one request.
+    }
+    return { ok: true, token: body.access_token }
+  })().finally(() => {
+    refreshing.delete(file)
+  })
+
+  refreshing.set(file, attempt)
+  return attempt
+}
+
+/**
  * Ask Anthropic directly, using the credentials Claude Code already holds.
  *
  * This is the only way to the real percentages — the plan's ceiling is reported
@@ -443,22 +582,43 @@ async function requestAnthropicUsage(): Promise<UsageReport> {
   let token = ''
   let plan = ''
   let tier = ''
+  const file = resolveCredentialsFile()
   try {
-    const file = resolveCredentialsFile()
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as {
-      claudeAiOauth?: {
-        accessToken?: string
-        expiresAt?: number
-        subscriptionType?: string
-        rateLimitTier?: string
-      }
-    }
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { claudeAiOauth?: OauthFields }
     const oauth = raw.claudeAiOauth
     token = oauth?.accessToken ?? ''
     plan = oauth?.subscriptionType ?? ''
     tier = oauth?.rateLimitTier ?? ''
-    if (oauth?.expiresAt && oauth.expiresAt < Date.now()) {
-      return fallback('That sign-in has expired. Open Claude Code once to refresh it.')
+
+    /*
+     * An access token this old is not a dead end — it is the ordinary state
+     * of a machine nobody has opened `claude` on today. Claude Code refreshes
+     * silently on its own next run; the token sitting on disk between times
+     * is often already past `expiresAt` while the refresh token underneath it
+     * is still good for weeks. Treating that as "sign in again" was the whole
+     * complaint: the same message kept coming back because nothing here ever
+     * did what Claude Code itself would have done with the very same file.
+     *
+     * Whether the refresh token itself is still good is not decided here.
+     * `refreshTokenExpiresAt` is a number this app wrote down at some earlier
+     * refresh and could be wrong in either direction — Anthropic's own answer
+     * to the refresh attempt is what settles it, not a locally cached guess.
+     */
+    if (oauth?.expiresAt && oauth.expiresAt < Date.now() + EXPIRY_SLACK_MS) {
+      const refreshed = await refreshCredentials(file)
+      if (refreshed.ok) {
+        token = refreshed.token
+      } else if (refreshed.reason === 'denied') {
+        return fallback('That sign-in has expired. Open Claude Code once to refresh it.')
+      } else {
+        // Unreachable, not rejected — a network hiccup, not a dead sign-in.
+        // Backed off the same as a 429 below, or a struggling network gets
+        // asked again every ninety seconds forever, which is the exact shape
+        // of the bug this whole path exists to avoid.
+        backoffMs = Math.min(Math.max(backoffMs * 2, BACKOFF_FIRST_MS), BACKOFF_MAX_MS)
+        blockedUntil = Date.now() + backoffMs
+        return fallback(`Could not refresh that sign-in. Trying again in ${waitLabel(backoffMs)}.`)
+      }
     }
   } catch {
     return fallback('No Claude credentials found on this machine.')
