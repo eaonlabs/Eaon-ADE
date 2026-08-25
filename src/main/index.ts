@@ -772,7 +772,10 @@ app.whenReady().then(() => {
   worktrees.setBaseDir(path.join(app.getPath('userData'), 'worktrees'))
   setUsagePaths({
     projects: () => accounts.activeProjectsDir(),
-    credentials: () => accounts.activeCredentialsFile()
+    credentials: () => accounts.activeCredentialsFile(),
+    // Null config dir means the original account, which is the only one whose
+    // credentials Claude Code keeps in the login keychain.
+    isDefaultAccount: () => accounts.activeConfigDir() === null
   })
   paneSessions = new PaneSessions()
   // Watches for the agents nobody told the app about — the ones you start by

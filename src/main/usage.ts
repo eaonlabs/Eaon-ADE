@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import os from 'node:os'
@@ -119,9 +120,107 @@ let resolveCredentialsFile: () => string = () =>
 export function setUsagePaths(paths: {
   projects: () => string
   credentials: () => string
+  /** True when no second account is active. Only then does the keychain hold
+   * the credentials for the account being counted. */
+  isDefaultAccount?: () => boolean
+  /** Test seam. Left out, the real login keychain is read. */
+  keychain?: () => string | null
 }): void {
   setProjectsRoot(paths.projects)
   resolveCredentialsFile = paths.credentials
+  if (paths.isDefaultAccount) isDefaultAccount = paths.isDefaultAccount
+  if (paths.keychain) readKeychain = paths.keychain
+  keychainMemo = null
+}
+
+/* Falls back to comparing paths, which is right for the shipped wiring and
+ * keeps anything that has not been told otherwise away from the keychain. */
+let isDefaultAccount: () => boolean = () =>
+  resolveCredentialsFile() === path.join(os.homedir(), '.claude', '.credentials.json')
+
+/*
+ * Where the credentials actually live on a Mac.
+ *
+ * `~/.claude/.credentials.json` is not the live copy here. Claude Code stores
+ * its OAuth material in the login keychain under this service name and stops
+ * writing the file; measured on this machine, the file's access token was 118
+ * hours stale and last written five days earlier, while the keychain's copy
+ * had six hours left on it and a refresh token good for a month — with Claude
+ * Code running the whole time. Reading the file and reporting what it found is
+ * why "That sign-in has expired" kept coming back and why the advice attached
+ * to it never worked: opening Claude Code refreshes the keychain, which the
+ * app was not looking at.
+ *
+ * The file is still the right answer for a second account, which lives in its
+ * own `CLAUDE_CONFIG_DIR` and is not in the keychain at all.
+ */
+const KEYCHAIN_SERVICE = 'Claude Code-credentials'
+
+let readKeychain: () => string | null = () => {
+  if (process.platform !== 'darwin') return null
+  try {
+    const out = execFileSync(
+      'security',
+      ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-w'],
+      { encoding: 'utf8', timeout: 5_000, stdio: ['ignore', 'pipe', 'ignore'] }
+    )
+    return out.trim() || null
+  } catch {
+    // No entry, an older Claude Code that still uses the file, or a locked
+    // keychain. All three mean "ask the file instead", not "no credentials".
+    return null
+  }
+}
+
+/** `security` is a subprocess and this is read on every poll; a few seconds of
+ * memo keeps a 90-second cadence from spawning one each time. */
+let keychainMemo: { at: number; raw: Record<string, unknown> | null } | null = null
+const KEYCHAIN_MEMO_MS = 15_000
+
+function keychainCredentials(): Record<string, unknown> | null {
+  if (keychainMemo && Date.now() - keychainMemo.at < KEYCHAIN_MEMO_MS) return keychainMemo.raw
+  let parsed: Record<string, unknown> | null = null
+  const raw = readKeychain()
+  if (raw) {
+    try {
+      parsed = JSON.parse(raw) as Record<string, unknown>
+    } catch {
+      parsed = null
+    }
+  }
+  keychainMemo = { at: Date.now(), raw: parsed }
+  return parsed
+}
+
+interface LoadedCredentials {
+  oauth: OauthFields
+  /** Which copy answered — it decides who is allowed to refresh. */
+  source: 'keychain' | 'file'
+  file: string
+}
+
+/**
+ * The freshest credentials available, and where they came from.
+ *
+ * The keychain is consulted only for the default account. A workspace pinned
+ * to another account resolves to that account's own config dir, and the
+ * keychain would hand back the wrong person's token — the exact "wrong that
+ * looks plausible" the projects root already guards against.
+ */
+function loadCredentials(): LoadedCredentials | null {
+  const file = resolveCredentialsFile()
+  if (isDefaultAccount()) {
+    const raw = keychainCredentials()
+    const oauth = raw?.claudeAiOauth as OauthFields | undefined
+    if (oauth?.accessToken) return { oauth, source: 'keychain', file }
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { claudeAiOauth?: OauthFields }
+    if (!raw.claudeAiOauth) return null
+    return { oauth: raw.claudeAiOauth, source: 'file', file }
+  } catch {
+    return null
+  }
 }
 
 function projectsDir(): string {
@@ -237,19 +336,11 @@ async function scanFile(file: string): Promise<void> {
 }
 
 function readCredentials(): { plan: string; tier: string } {
-  try {
-    const raw = JSON.parse(fs.readFileSync(resolveCredentialsFile(), 'utf8')) as {
-      claudeAiOauth?: { subscriptionType?: string; rateLimitTier?: string }
-    }
-    // Only the plan name and tier are read. The tokens beside them are not touched
-    // unless the authenticated source is switched on, which is a separate door.
-    return {
-      plan: raw.claudeAiOauth?.subscriptionType ?? '',
-      tier: raw.claudeAiOauth?.rateLimitTier ?? ''
-    }
-  } catch {
-    return { plan: '', tier: '' }
-  }
+  // Only the plan name and tier are read. The tokens beside them are not touched
+  // unless the authenticated source is switched on, which is a separate door.
+  const got = loadCredentials()
+  if (!got) return { plan: '', tier: '' }
+  return { plan: got.oauth.subscriptionType ?? '', tier: got.oauth.rateLimitTier ?? '' }
 }
 
 /** Fold the events inside one window into per-model totals. */
@@ -582,60 +673,89 @@ async function requestAnthropicUsage(): Promise<UsageReport> {
   let token = ''
   let plan = ''
   let tier = ''
-  const file = resolveCredentialsFile()
-  try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { claudeAiOauth?: OauthFields }
-    const oauth = raw.claudeAiOauth
-    token = oauth?.accessToken ?? ''
-    plan = oauth?.subscriptionType ?? ''
-    tier = oauth?.rateLimitTier ?? ''
+  /* At most one refresh per check. The pre-flight below and the 401 retry
+   * further down are two ways of reaching the same conclusion, and a token
+   * that was just replaced does not need replacing again. */
+  let refreshed = false
+  const creds = loadCredentials()
+  if (!creds) return fallback('No Claude credentials found on this machine.')
+  const { oauth, source, file } = creds
+  token = oauth.accessToken ?? ''
+  plan = oauth.subscriptionType ?? ''
+  tier = oauth.rateLimitTier ?? ''
 
-    /*
-     * An access token this old is not a dead end — it is the ordinary state
-     * of a machine nobody has opened `claude` on today. Claude Code refreshes
-     * silently on its own next run; the token sitting on disk between times
-     * is often already past `expiresAt` while the refresh token underneath it
-     * is still good for weeks. Treating that as "sign in again" was the whole
-     * complaint: the same message kept coming back because nothing here ever
-     * did what Claude Code itself would have done with the very same file.
-     *
-     * Whether the refresh token itself is still good is not decided here.
-     * `refreshTokenExpiresAt` is a number this app wrote down at some earlier
-     * refresh and could be wrong in either direction — Anthropic's own answer
-     * to the refresh attempt is what settles it, not a locally cached guess.
-     */
-    if (oauth?.expiresAt && oauth.expiresAt < Date.now() + EXPIRY_SLACK_MS) {
-      const refreshed = await refreshCredentials(file)
-      if (refreshed.ok) {
-        token = refreshed.token
-      } else if (refreshed.reason === 'denied') {
-        return fallback('That sign-in has expired. Open Claude Code once to refresh it.')
-      } else {
-        // Unreachable, not rejected — a network hiccup, not a dead sign-in.
-        // Backed off the same as a 429 below, or a struggling network gets
-        // asked again every ninety seconds forever, which is the exact shape
-        // of the bug this whole path exists to avoid.
-        backoffMs = Math.min(Math.max(backoffMs * 2, BACKOFF_FIRST_MS), BACKOFF_MAX_MS)
-        blockedUntil = Date.now() + backoffMs
-        return fallback(`Could not refresh that sign-in. Trying again in ${waitLabel(backoffMs)}.`)
-      }
+  /*
+   * A stale access token is the ordinary state of a machine nobody has opened
+   * `claude` on today; it is not a dead sign-in. Who is allowed to do
+   * something about it depends entirely on where it came from.
+   *
+   * From the keychain: nobody here. That copy is Claude Code's own, and a
+   * refresh can rotate the refresh token — spending it would hand this app a
+   * working token and leave Claude Code holding one the server has just
+   * retired. Breaking the user's CLI sign-in to put a percentage in a popover
+   * is not a trade worth making, and it is not needed: Claude Code refreshes
+   * that entry itself on its next run, so the advice in the message is finally
+   * true when it is shown for this reason.
+   *
+   * From a file: this app is the only thing that will ever refresh it, so it
+   * does, and writes the result back the way Claude Code would have.
+   */
+  const stale = !oauth.expiresAt || oauth.expiresAt < Date.now() + EXPIRY_SLACK_MS
+  if (stale && source === 'keychain') {
+    return fallback('That sign-in has expired. Open Claude Code once to refresh it.')
+  }
+  if (stale && oauth.refreshToken) {
+    refreshed = true
+    const got = await refreshCredentials(file)
+    if (got.ok) {
+      token = got.token
+    } else if (got.reason === 'denied') {
+      return fallback('That sign-in has expired. Open Claude Code once to refresh it.')
+    } else {
+      // Unreachable, not rejected — a network hiccup, not a dead sign-in.
+      // Backed off the same as a 429 below, or a struggling network gets
+      // asked again every ninety seconds forever, which is the exact shape
+      // of the bug this whole path exists to avoid.
+      backoffMs = Math.min(Math.max(backoffMs * 2, BACKOFF_FIRST_MS), BACKOFF_MAX_MS)
+      blockedUntil = Date.now() + backoffMs
+      return fallback(`Could not refresh that sign-in. Trying again in ${waitLabel(backoffMs)}.`)
     }
-  } catch {
-    return fallback('No Claude credentials found on this machine.')
   }
   if (!token) return fallback('No Claude credentials found on this machine.')
 
   let body: Record<string, { utilization?: number; resets_at?: string }>
-  try {
-    const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
+  const ask = (bearer: string): Promise<Response> =>
+    fetch('https://api.anthropic.com/api/oauth/usage', {
       headers: {
-        authorization: `Bearer ${token}`,
+        authorization: `Bearer ${bearer}`,
         'anthropic-beta': 'oauth-2025-04-20',
         accept: 'application/json',
         // An unnamed client is the easiest kind to throttle.
         'user-agent': `EaonADE/${app.getVersion()}`
       }
     })
+  try {
+    let res = await ask(token)
+
+    /*
+     * A token whose `expiresAt` is still in the future can be refused anyway:
+     * a clock that drifted, a sign-out somewhere else, a rotation this app did
+     * not see. The pre-flight check above reads our own note about the token;
+     * this reads Anthropic's answer about it, and Anthropic wins. One refresh,
+     * one retry, then take the reply at face value — without this, a 401 fell
+     * to the generic branch below and backed off for minutes at a time while
+     * the refresh token sitting on disk would have fixed it immediately.
+     */
+    if ((res.status === 401 || res.status === 403) && !refreshed && source === 'file') {
+      refreshed = true
+      const got = await refreshCredentials(file)
+      if (got.ok) {
+        token = got.token
+        res = await ask(token)
+      } else if (got.reason === 'denied') {
+        return fallback('That sign-in has expired. Open Claude Code once to refresh it.')
+      }
+    }
     if (res.status === 429) {
       const named = retryAfterMs(res.headers.get('retry-after'))
       backoffMs = named || Math.min(Math.max(backoffMs * 2, BACKOFF_FIRST_MS), BACKOFF_MAX_MS)

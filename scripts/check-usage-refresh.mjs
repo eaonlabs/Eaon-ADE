@@ -68,6 +68,7 @@ setUsagePaths({ projects: () => PROJECTS, credentials: () => CREDS })
 
 let refreshCalls = 0
 let usageCalls = 0
+let lastAuth = ''
 let refreshMode = 'ok'
 
 const realFetch = globalThis.fetch
@@ -81,6 +82,11 @@ globalThis.fetch = async (url, init) => {
     }
     if (refreshMode === 'denied') return new Response('', { status: 400 })
     if (refreshMode === 'network-fail') throw new Error('ECONNRESET')
+    if (refreshMode === 'ok-still-bad') {
+      return new Response(JSON.stringify({ access_token: 'refreshed-but-bad', expires_in: 28800 }), {
+        status: 200
+      })
+    }
     if (refreshMode === 'ok-no-expiry') {
       return new Response(JSON.stringify({ access_token: 'fresh-token-no-exp' }), { status: 200 })
     }
@@ -102,6 +108,7 @@ globalThis.fetch = async (url, init) => {
   if (href.includes('/api/oauth/usage')) {
     usageCalls += 1
     const auth = init?.headers?.authorization ?? ''
+    lastAuth = auth
     if (!auth.includes('fresh-token') && !auth.includes('still-valid')) {
       return new Response('', { status: 401 })
     }
@@ -258,6 +265,167 @@ try {
   const together = await Promise.all(Array.from({ length: 8 }, () => anthropicUsage()))
   check('eight readers, one refresh', refreshCalls === 1, refreshCalls)
   check('and they all get an answer', together.every((r) => r.source === 'anthropic'))
+  /* ---- the server's answer outranks our own timestamp ------------------- */
+
+  console.log('\na token Anthropic refuses is refreshed even when our clock says it is fine')
+  writeCreds({
+    accessToken: 'stale-7',
+    // Far in the future: the pre-flight check has no reason to act.
+    expiresAt: Date.now() + 6 * 3600e3,
+    refreshToken: 'rt-8',
+    refreshTokenExpiresAt: Date.now() + 30 * 86400e3
+  })
+  resetUsageCache()
+  refreshCalls = 0
+  usageCalls = 0
+  refreshMode = 'ok'
+  const skewed = await anthropicUsage()
+  check('the 401 triggered a refresh', refreshCalls === 1, refreshCalls)
+  check('and the request was retried', usageCalls === 2, usageCalls)
+  check('so the readout is live, not a backoff message', skewed.source === 'anthropic', skewed.error)
+
+  console.log('\ncredentials with no expiresAt are refreshed, not trusted')
+  writeCreds({
+    accessToken: 'stale-8',
+    refreshToken: 'rt-9',
+    refreshTokenExpiresAt: Date.now() + 30 * 86400e3
+  })
+  resetUsageCache()
+  refreshCalls = 0
+  usageCalls = 0
+  const noExp = await anthropicUsage()
+  check('a missing timestamp still refreshes', refreshCalls === 1, refreshCalls)
+  check('and it succeeded first try', usageCalls === 1, usageCalls)
+  check('the readout is live', noExp.source === 'anthropic', noExp.error)
+
+  console.log('\nno refresh token and no timestamp: the access token is still tried')
+  writeCreds({ accessToken: 'still-valid' })
+  resetUsageCache()
+  refreshCalls = 0
+  usageCalls = 0
+  const bare = await anthropicUsage()
+  check('nothing to refresh with, so nothing attempted', refreshCalls === 0, refreshCalls)
+  check('the token was used anyway', usageCalls === 1, usageCalls)
+  check('and it worked', bare.source === 'anthropic', bare.error)
+
+  console.log('\na 401 whose refresh is denied says sign in again, not "Anthropic replied 401"')
+  writeCreds({
+    accessToken: 'stale-9',
+    expiresAt: Date.now() + 6 * 3600e3,
+    refreshToken: 'rt-10',
+    refreshTokenExpiresAt: Date.now() + 30 * 86400e3
+  })
+  resetUsageCache()
+  refreshCalls = 0
+  refreshMode = 'denied'
+  const revoked = await anthropicUsage()
+  check('it names the real problem', /has expired/.test(revoked.error ?? ''), revoked.error)
+  check('not the status code', !/replied 401/.test(revoked.error ?? ''), revoked.error)
+
+  console.log('\none refresh per check, even when the fresh token is refused too')
+  writeCreds({
+    accessToken: 'stale-10',
+    expiresAt: Date.now() - 1000,
+    refreshToken: 'rt-11',
+    refreshTokenExpiresAt: Date.now() + 30 * 86400e3
+  })
+  resetUsageCache()
+  refreshCalls = 0
+  usageCalls = 0
+  refreshMode = 'ok-still-bad'
+  await anthropicUsage()
+  check('the refresh token is spent once, not twice', refreshCalls === 1, refreshCalls)
+  // The pre-flight refresh already spent this check's one attempt, so the 401
+  // that follows is taken at face value rather than starting the cycle again.
+  check('and the 401 after it is not retried', usageCalls === 1, usageCalls)
+  refreshMode = 'ok'
+  /* ---- the login keychain, which is where a Mac actually keeps these ----- */
+
+  const useKeychain = (json) =>
+    setUsagePaths({
+      projects: () => PROJECTS,
+      credentials: () => CREDS,
+      isDefaultAccount: () => true,
+      keychain: () => (json === null ? null : JSON.stringify(json))
+    })
+  const useFileOnly = () =>
+    setUsagePaths({ projects: () => PROJECTS, credentials: () => CREDS, isDefaultAccount: () => false })
+
+  console.log('\nthe keychain wins over a stale file')
+  // Exactly the shape found on the real machine: the file five days behind,
+  // the keychain current, Claude Code running the whole time.
+  writeCreds({
+    accessToken: 'stale-file-token',
+    expiresAt: Date.now() - 118 * 3600e3,
+    refreshToken: 'rt-file',
+    refreshTokenExpiresAt: Date.now() + 86 * 3600e3
+  })
+  useKeychain({
+    claudeAiOauth: {
+      accessToken: 'still-valid',
+      expiresAt: Date.now() + 6.4 * 3600e3,
+      refreshToken: 'rt-keychain',
+      refreshTokenExpiresAt: Date.now() + 27 * 86400e3,
+      subscriptionType: 'max'
+    }
+  })
+  resetUsageCache()
+  refreshCalls = 0
+  usageCalls = 0
+  lastAuth = ''
+  const kc = await anthropicUsage()
+  check('no refresh was needed', refreshCalls === 0, refreshCalls)
+  check('the keychain token was the one sent', lastAuth.includes('still-valid'), lastAuth.slice(0, 24))
+  check('and the readout is live', kc.source === 'anthropic', kc.error)
+  check('no "sign-in has expired"', !/has expired/.test(kc.error ?? ''), kc.error)
+
+  console.log('\na stale keychain token is reported, never refreshed')
+  // The safety case. Refreshing here can rotate the refresh token and leave
+  // Claude Code holding one the server just retired — breaking the CLI's own
+  // sign-in to fill in a percentage.
+  useKeychain({
+    claudeAiOauth: {
+      accessToken: 'keychain-stale',
+      expiresAt: Date.now() - 3600e3,
+      refreshToken: 'rt-keychain',
+      refreshTokenExpiresAt: Date.now() + 27 * 86400e3
+    }
+  })
+  resetUsageCache()
+  refreshCalls = 0
+  const kcStale = await anthropicUsage()
+  check('the keychain refresh token is never spent', refreshCalls === 0, refreshCalls)
+  check('and the advice given is the one that works', /Open Claude Code/.test(kcStale.error ?? ''), kcStale.error)
+
+  console.log('\nno keychain entry falls back to the file')
+  writeCreds({
+    accessToken: 'still-valid',
+    expiresAt: Date.now() + 3600e3,
+    refreshToken: 'rt-file2',
+    refreshTokenExpiresAt: Date.now() + 30 * 86400e3
+  })
+  useKeychain(null)
+  resetUsageCache()
+  usageCalls = 0
+  lastAuth = ''
+  const noKc = await anthropicUsage()
+  check('the file answered instead', noKc.source === 'anthropic', noKc.error)
+  check('using the file token', lastAuth.includes('still-valid'), lastAuth.slice(0, 24))
+
+  console.log('\na second account never reads the keychain')
+  writeCreds({
+    accessToken: 'stale-acct2',
+    expiresAt: Date.now() - 3600e3,
+    refreshToken: 'rt-acct2',
+    refreshTokenExpiresAt: Date.now() + 30 * 86400e3
+  })
+  useFileOnly()
+  resetUsageCache()
+  refreshCalls = 0
+  refreshMode = 'ok'
+  const acct2 = await anthropicUsage()
+  check('it refreshed its own file instead', refreshCalls === 1, refreshCalls)
+  check('and got a live readout', acct2.source === 'anthropic', acct2.error)
 } finally {
   globalThis.fetch = realFetch
   fs.rmSync(tmp, { recursive: true, force: true })
