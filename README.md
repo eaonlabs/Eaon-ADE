@@ -528,3 +528,4 @@ microphone is open only while you are dictating.
 Spoken alerts are local for the same reason in the other direction: the line is
 rendered by macOS's own synthesiser on this machine. No text is sent to a speech
 service, and nothing about which pane finished, or when, leaves the computer.
+Made with ❤️ in California
