@@ -434,6 +434,7 @@ function registerIpc(): void {
   ipcMain.handle('fs:mime', (_e, file: string) => fsapi.mimeFor(file))
   ipcMain.handle('fs:write', (_e, file: string, text: string) => fsapi.writeFile(file, text))
   ipcMain.handle('fs:search', (_e, root: string, q: string) => fsapi.searchFiles(root, q))
+  ipcMain.handle('fs:grep', (_e, root: string, q: string) => fsapi.grepFiles(root, q, which))
   ipcMain.handle('fs:isDir', (_e, target: string) => fsapi.isDirectory(target))
   ipcMain.handle('fs:saveDropped', (_e, name: string, bytes: Uint8Array) =>
     fsapi.saveDropped(name, bytes)

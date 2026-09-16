@@ -12,6 +12,7 @@ import type { Account, LoginState } from '../shared/accounts'
 import type { ProviderState } from '../shared/integrations'
 import type { Worktree, WorktreeChange } from '../shared/worktrees'
 import type { SshHost } from '../shared/ssh'
+import type { GrepResult } from '../shared/grep'
 import type { LinearTeam, TaskFetch } from '../shared/tasks'
 import type { Stats } from '../shared/stats'
 import type {
@@ -99,6 +100,13 @@ const api = {
       ipcRenderer.invoke('fs:write', file, text),
     search: (root: string, q: string): Promise<DirEntry[]> =>
       ipcRenderer.invoke('fs:search', root, q),
+    /**
+     * Inside the files, rather than across their names. Capped hard in the
+     * main process — the result says when it stopped early rather than
+     * presenting a slice as the whole answer.
+     */
+    grep: (root: string, q: string): Promise<GrepResult> =>
+      ipcRenderer.invoke('fs:grep', root, q),
     isDir: (target: string): Promise<boolean> => ipcRenderer.invoke('fs:isDir', target),
     pickFolder: (startIn?: string): Promise<string | null> =>
       ipcRenderer.invoke('dialog:pickFolder', startIn),
