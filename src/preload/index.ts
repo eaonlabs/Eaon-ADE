@@ -13,7 +13,7 @@ import type { ProviderState } from '../shared/integrations'
 import type { Worktree, WorktreeChange } from '../shared/worktrees'
 import type { SshHost } from '../shared/ssh'
 import type { GrepResult } from '../shared/grep'
-import type { LinearTeam, TaskFetch } from '../shared/tasks'
+import type { LinearTeam, PrDetail, TaskFetch } from '../shared/tasks'
 import type { Stats } from '../shared/stats'
 import type {
   BrainGraph,
@@ -72,6 +72,16 @@ const api = {
         cb(p.paneId, p.exitCode)
       ipcRenderer.on('pty:exit', handler)
       return () => ipcRenderer.removeListener('pty:exit', handler)
+    }
+  },
+
+  /** The agent running in a pane, whenever it changes — including to nothing. */
+  paneAgents: {
+    onChange: (
+      handler: (e: unknown, payload: { paneId: string; agentId: string | null }) => void
+    ): (() => void) => {
+      ipcRenderer.on('pane:agent', handler)
+      return () => ipcRenderer.removeListener('pane:agent', handler)
     }
   },
 
@@ -141,6 +151,14 @@ const api = {
       ipcRenderer.invoke('git:status', cwd, host),
     branch: (cwd: string, host?: SshHost | null): Promise<string | null> =>
       ipcRenderer.invoke('git:branch', cwd, host),
+    branches: (cwd: string, host?: SshHost | null): Promise<string[]> =>
+      ipcRenderer.invoke('git:branches', cwd, host),
+    switch: (
+      cwd: string,
+      branch: string,
+      host?: SshHost | null
+    ): Promise<{ ok: boolean; message: string }> =>
+      ipcRenderer.invoke('git:switch', cwd, branch, host),
     diff: (cwd: string, file: string, staged: boolean, host?: SshHost | null): Promise<string> =>
       ipcRenderer.invoke('git:diff', cwd, file, staged, host),
     stage: (cwd: string, file: string, host?: SshHost | null): Promise<void> =>
@@ -192,7 +210,20 @@ const api = {
       title: string
       description?: string
     }): Promise<{ ok: boolean; message: string; url?: string }> =>
-      ipcRenderer.invoke('tasks:createLinearIssue', input)
+      ipcRenderer.invoke('tasks:createLinearIssue', input),
+    pullRequests: (cwd: string, state: 'open' | 'merged' | 'all'): Promise<TaskFetch> =>
+      ipcRenderer.invoke('tasks:pullRequests', cwd, state),
+    prDetail: (cwd: string, number: number): Promise<PrDetail | { error: string }> =>
+      ipcRenderer.invoke('tasks:prDetail', cwd, number),
+    prDiff: (cwd: string, number: number): Promise<Record<string, string>> =>
+      ipcRenderer.invoke('tasks:prDiff', cwd, number),
+    reviewPr: (
+      cwd: string,
+      number: number,
+      event: 'approve' | 'comment' | 'request-changes',
+      body?: string
+    ): Promise<{ ok: boolean; message: string }> =>
+      ipcRenderer.invoke('tasks:reviewPr', cwd, number, event, body)
   },
 
   /** Remote boxes: reading `~/.ssh/config` for the connect picker. */

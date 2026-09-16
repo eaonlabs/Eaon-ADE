@@ -269,3 +269,407 @@
   resize: vertical;
   font-family: inherit;
 }
+
+/* ---- pull request review -------------------------------------------------
+ * Files/Changes/Review, opened from a PR's row. Files lists the changeset
+ * grouped by directory (from `gh pr view --json files`, no diff parsing
+ * needed for the counts); Changes shows one file's patch, reusing GitPanel's
+ * own DiffView; Review is the three ways to answer it.
+ */
+
+.pr-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  border-bottom: 1px solid var(--line-100);
+}
+
+.pr-add {
+  color: var(--live);
+}
+.pr-del {
+  color: var(--danger);
+}
+.pr-dim {
+  color: var(--text-dim);
+}
+
+.pr-tabs {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line-100);
+}
+
+.pr-tab {
+  padding: 3px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-lo);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+  transition:
+    color var(--dur) var(--ease),
+    background var(--dur) var(--ease);
+}
+.pr-tab:hover {
+  color: var(--text-hi);
+}
+.pr-tab[data-on='true'] {
+  background: var(--ink-300);
+  color: var(--text-hi);
+}
+
+.pr-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pr-files {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.pr-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-mid);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.pr-file:hover {
+  background: var(--ink-100);
+  color: var(--text-hi);
+}
+.pr-file[data-on='true'] {
+  background: var(--ink-300);
+  color: var(--text-hi);
+}
+
+.pr-file-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--text-lo);
+}
+.pr-file-icon[data-kind='ADDED'] {
+  color: var(--live);
+}
+.pr-file-icon[data-kind='DELETED'] {
+  color: var(--danger);
+}
+
+.pr-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-file-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+
+.pr-review-form {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 10px;
+}
+
+/* ---- the full-page pull request browser --------------------------------- *
+ *
+ * The dock's Work tab and this page render the same rows from the same fetch;
+ * everything below is the difference a full stage makes. The list keeps the
+ * dock's row, because a pull request should not look like two different things
+ * in two places, and spends the extra width on a preview beside it instead.
+ */
+
+.pr-page {
+  height: 100%;
+  min-height: 0;
+}
+
+/*
+ * Wider than the 210px `.panel-split` gives a dock sidebar. A pull request
+ * row carries a ref, a title, a state and an author, and at 210px the title
+ * is ellipsed to nothing — which is the one part you pick a row by.
+ */
+.pr-page-split {
+  grid-template-columns: minmax(320px, 30%) 1fr;
+}
+
+.pr-page-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--line-100);
+}
+
+.pr-page-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 10px;
+  border-bottom: 1px solid var(--line-100);
+}
+/* The same field as everywhere else, at the height a toolbar wants. */
+.pr-page-head .field {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 9px;
+  gap: 7px;
+}
+.pr-page-head .field input {
+  font-size: var(--fs-micro);
+}
+
+.pr-page-count {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 8px 6px 4px 10px;
+}
+
+/* ---- a row you can pick ------------------------------------------------- */
+
+.pr-row {
+  padding: 0 4px 0 0;
+  align-items: stretch;
+}
+.pr-row[data-on='true'] {
+  border-color: var(--accent-edge);
+  background: var(--accent-wash);
+}
+
+/*
+ * The clickable body of the row. Carries the padding `.wk-row` would normally
+ * own, so the hit area reaches the edges of the row rather than stopping
+ * short of them.
+ */
+.pr-pick {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 4px 8px 10px;
+  background: none;
+  border: none;
+  text-align: left;
+}
+.pr-pick:focus-visible {
+  outline: 2px solid var(--accent-edge);
+  outline-offset: -2px;
+  border-radius: var(--r-sm);
+}
+/* Not a link in here — the whole row is the target. */
+.pr-row .wk-ref {
+  cursor: inherit;
+}
+.pr-row .wk-ref:hover {
+  color: var(--text-lo);
+  text-decoration: none;
+}
+
+.pr-row .wk-actions {
+  align-self: center;
+}
+
+/* ---- nothing came back -------------------------------------------------- */
+
+/*
+ * Danger rather than the attention colour the dock uses for the same notes.
+ * There, a note sits under a list that still has work in it. Here it *is* the
+ * list — no remote, no CLI, no folder — and every one of those is something
+ * the person has to go and fix before this page shows anything at all.
+ */
+.pr-fail {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  margin: 6px 2px;
+  padding: 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid color-mix(in srgb, var(--danger) 38%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+.pr-fail-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-label);
+  line-height: 1.55;
+}
+.pr-fail-line svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.pr-fail-line strong {
+  font-weight: 600;
+}
+
+/* ---- the preview side --------------------------------------------------- */
+
+.pr-page-preview {
+  min-width: 0;
+}
+.pr-page-empty {
+  height: 100%;
+  align-content: center;
+  gap: 10px;
+  padding: 40px;
+}
+.pr-page-empty svg {
+  color: var(--text-dim);
+}
+
+/* ---- reading one pull request ------------------------------------------- *
+ *
+ * The right-hand pane in preview mode: what a pull request says, then what it
+ * changes. Everything below the header reuses the review panel's own classes
+ * (.pr-stat, .pr-files, .pr-file) so the two modes of this pane do not look
+ * like two different products.
+ */
+
+.pr-preview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.pr-head {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 8px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--line-100);
+}
+.pr-head-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.pr-head-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-hi);
+}
+.pr-head-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  font-size: var(--fs-micro);
+  color: var(--text-lo);
+}
+.pr-head-author::before {
+  /* "by ada" reads as a sentence where a bare name reads as another label. */
+  content: 'by ';
+  color: var(--text-dim);
+}
+.pr-head-branches {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-200);
+  color: var(--text-lo);
+}
+.pr-head-branches svg {
+  color: var(--text-dim);
+}
+
+.pr-preview-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+/*
+ * The description, in the same type the Pages surface renders a README in.
+ * Boxed rather than bare so it reads as "what the author wrote" and not as
+ * part of this app's own chrome.
+ */
+.pr-body-md {
+  margin-bottom: 14px;
+  padding: 2px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-100);
+  background: var(--ink-100);
+}
+.pr-body-md .fp-markdown {
+  padding: 0;
+}
+
+/* ---- the changed files -------------------------------------------------- */
+
+.pr-preview .pr-stat {
+  margin-bottom: 4px;
+}
+
+.pr-file-caret {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  transition: transform var(--dur) var(--ease);
+}
+.pr-file-caret[data-open='true'] {
+  transform: rotate(90deg);
+}
+
+/* The path in full, with only the last part in reading colour — a list of
+   twelve files in four directories is unreadable without it. */
+.pr-file-dir {
+  color: var(--text-dim);
+}
+
+.pr-file-diff {
+  margin: 2px 0 8px 18px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-100);
+  overflow: hidden;
+}
+.pr-file-diff .wk-note {
+  align-items: center;
+  margin: 8px 10px;
+}

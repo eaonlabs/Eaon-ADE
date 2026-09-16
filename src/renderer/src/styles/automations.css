@@ -1,0 +1,107 @@
+/*
+ * Automations page.
+ *
+ * Only what the shared classes do not already give. The rows are `.wk-row`
+ * from the tasks panel and the shell is `.panel` / `.panel-bar`, so what is
+ * left here is the create form and the few row details that are this page's
+ * own.
+ */
+
+.automations {
+  min-width: 0;
+}
+
+.auto-bar-spacer {
+  flex: 1;
+}
+
+.auto-count {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.auto-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+/* ---- the create form --------------------------------------------------- */
+
+.auto-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 10px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-200);
+  background: var(--ink-100);
+}
+
+.auto-form-head,
+.auto-form-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.auto-form-head .eyebrow {
+  flex: 1;
+}
+
+.auto-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.auto-label {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+
+/*
+ * Auto-fit rather than fixed columns: the time field only exists while the
+ * trigger is `daily`, and a fixed three-column grid would leave a hole on
+ * the other two.
+ */
+.auto-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.auto-prompt {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+}
+
+.auto-folder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.auto-folder .wk-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.auto-hint {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+
+/* ---- rows -------------------------------------------------------------- */
+
+/* The folder an automation runs in, which is half of what identifies it. */
+.auto-cwd {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}

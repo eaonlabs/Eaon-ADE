@@ -7,6 +7,8 @@ import {
   toneOfGithubPr,
   toneOfLinear,
   type LinearTeam,
+  type PrDetail,
+  type PrFile,
   type TaskFetch,
   type WorkItem
 } from '../shared/tasks'
@@ -94,6 +96,7 @@ interface GhPr {
   labels?: { name: string }[]
   updatedAt?: string
   reviewDecision?: string | null
+  body?: string
 }
 
 interface GhIssue {
@@ -104,6 +107,7 @@ interface GhIssue {
   author?: GhAuthor | null
   labels?: { name: string }[]
   updatedAt?: string
+  body?: string
 }
 
 async function gh(cwd: string, args: string[]): Promise<string> {
@@ -124,7 +128,7 @@ export async function githubItems(cwd: string): Promise<TaskFetch> {
       '--limit',
       String(PAGE),
       '--json',
-      'number,title,state,isDraft,url,headRefName,author,labels,updatedAt,reviewDecision'
+      'number,title,state,isDraft,url,headRefName,author,labels,updatedAt,reviewDecision,body'
     ])
     for (const pr of JSON.parse(out || '[]') as GhPr[]) {
       items.push({
@@ -146,7 +150,8 @@ export async function githubItems(cwd: string): Promise<TaskFetch> {
         // `||`, not `??`: gh sends an empty string — not null — for a PR
         // nobody has reviewed, and `?? null` would let that through to be
         // rendered as a blank review badge.
-        reviewDecision: pr.reviewDecision || null
+        reviewDecision: pr.reviewDecision || null,
+        body: pr.body?.trim() || null
       })
     }
   } catch (err) {
@@ -162,7 +167,7 @@ export async function githubItems(cwd: string): Promise<TaskFetch> {
       '--limit',
       String(PAGE),
       '--json',
-      'number,title,state,url,author,labels,updatedAt'
+      'number,title,state,url,author,labels,updatedAt,body'
     ])
     for (const issue of JSON.parse(out || '[]') as GhIssue[]) {
       const base = { ref: `#${issue.number}`, title: issue.title }
@@ -180,7 +185,8 @@ export async function githubItems(cwd: string): Promise<TaskFetch> {
         branchExists: false,
         labels: (issue.labels ?? []).map((l) => l.name),
         updatedAt: issue.updatedAt ?? null,
-        reviewDecision: null
+        reviewDecision: null,
+        body: issue.body?.trim() || null
       })
     }
   } catch (err) {
@@ -212,6 +218,145 @@ export async function approvePr(
   }
 }
 
+/**
+ * Pull requests at a chosen state, for the Pull requests page.
+ *
+ * Deliberately NOT a widening of `githubItems`. That list answers "what should
+ * I pick up", so open-only is correct there — a merged PR in it is noise you
+ * cannot act on. This page asks a different question ("show me this repo's
+ * pull requests"), and its Merged tab could never fill while the only fetch in
+ * the module was `--state open`: the rows were not being filtered out in the
+ * renderer, they were never fetched. Found by the session that built the page.
+ */
+export async function pullRequests(
+  cwd: string,
+  state: 'open' | 'merged' | 'all'
+): Promise<TaskFetch> {
+  const items: WorkItem[] = []
+  const notes: TaskFetch['notes'] = []
+  try {
+    const out = await gh(cwd, [
+      'pr',
+      'list',
+      '--state',
+      state,
+      '--limit',
+      String(PAGE),
+      '--json',
+      'number,title,state,isDraft,url,headRefName,author,labels,updatedAt,reviewDecision,body'
+    ])
+    for (const pr of JSON.parse(out || '[]') as GhPr[]) {
+      items.push({
+        id: `github:pr:${pr.number}`,
+        provider: 'github',
+        kind: 'pr',
+        ref: `#${pr.number}`,
+        title: pr.title,
+        state: pr.isDraft ? 'Draft' : pr.state,
+        tone: toneOfGithubPr(pr.state, pr.isDraft),
+        author: pr.author?.login ?? null,
+        url: pr.url,
+        branch: pr.headRefName,
+        branchExists: true,
+        labels: (pr.labels ?? []).map((l) => l.name),
+        updatedAt: pr.updatedAt ?? null,
+        reviewDecision: pr.reviewDecision || null,
+        body: pr.body?.trim() || null
+      })
+    }
+  } catch (err) {
+    notes.push({ provider: 'github', message: explain(err, 'gh', cwd) })
+  }
+  return { items, notes: dedupe(notes) }
+}
+
+/**
+ * A pull request's changeset — the diffstat and the per-file breakdown,
+ * for the review panel's Files tab. One `gh pr view` call; the byte-for-byte
+ * same shape `gh` already hands back, so nothing here reinterprets it.
+ */
+export async function prDetail(cwd: string, number: number): Promise<PrDetail | { error: string }> {
+  try {
+    const out = await gh(cwd, [
+      'pr',
+      'view',
+      String(number),
+      '--json',
+      'number,title,url,baseRefName,additions,deletions,changedFiles,files'
+    ])
+    return JSON.parse(out) as PrDetail & { files: PrFile[] }
+  } catch (err) {
+    return { error: explain(err, 'gh', cwd) }
+  }
+}
+
+/**
+ * A pull request's full diff, split into one entry per file.
+ *
+ * `gh pr diff` has no way to ask for a single file's patch — the whole
+ * changeset comes back as one unified diff, `diff --git a/<path> b/<path>`
+ * headers marking where each file starts. Split on that boundary rather than
+ * re-fetching per file: the Files tab already lists every path from
+ * {@link prDetail}, and asking `gh` once for the lot is one round trip
+ * instead of N.
+ *
+ * A renamed file's header reads `diff --git a/<old> b/<new>` — the *new*
+ * path is what the Files tab lists (that is what `gh pr view --json files`
+ * calls `path`), so the key is taken from the `b/` side.
+ */
+export async function prDiff(cwd: string, number: number): Promise<Record<string, string>> {
+  const out = await gh(cwd, ['pr', 'diff', String(number)])
+  const byFile: Record<string, string> = {}
+  const header = /^diff --git a\/.*? b\/(.*)$/
+  let path: string | null = null
+  let lines: string[] = []
+  const flush = (): void => {
+    if (path) byFile[path] = lines.join('\n')
+  }
+  for (const line of out.split('\n')) {
+    const m = header.exec(line)
+    if (m) {
+      flush()
+      path = m[1]
+      lines = [line]
+    } else {
+      lines.push(line)
+    }
+  }
+  flush()
+  return byFile
+}
+
+/**
+ * Leave a review — approve, request changes, or just comment — on a pull
+ * request. `approvePr` above is the one write this module made before this
+ * panel existed; this is its general form, for the Review tab's three
+ * buttons. Left as a sibling rather than rewriting `approvePr` in terms of
+ * it, so the existing call site keeps working exactly as it did.
+ */
+export async function reviewPr(
+  cwd: string,
+  number: number,
+  event: 'approve' | 'comment' | 'request-changes',
+  body?: string
+): Promise<{ ok: boolean; message: string }> {
+  const flag = event === 'approve' ? '--approve' : event === 'comment' ? '--comment' : '--request-changes'
+  const args = ['pr', 'review', String(number), flag]
+  if (body?.trim()) args.push('--body', body.trim())
+  // A plain comment needs *something* said — gh itself refuses an empty body
+  // for --comment, and failing here with a clear reason beats a bare exec error.
+  if (event === 'comment' && !body?.trim()) {
+    return { ok: false, message: 'A comment needs something written in it.' }
+  }
+  try {
+    const out = await gh(cwd, args)
+    const verb = event === 'approve' ? 'Approved' : event === 'request-changes' ? 'Requested changes on' : 'Commented on'
+    return { ok: true, message: out.trim() || `${verb} #${number}.` }
+  } catch (err) {
+    return { ok: false, message: explain(err, 'gh', cwd) }
+  }
+}
+
 /* ------------------------------------------------------------------------ *
  * GitLab, through glab
  * ------------------------------------------------------------------------ */
@@ -227,6 +372,7 @@ interface GlabMr {
   author?: { username?: string } | null
   labels?: string[]
   updated_at?: string
+  description?: string
 }
 
 interface GlabIssue {
@@ -237,6 +383,7 @@ interface GlabIssue {
   author?: { username?: string } | null
   labels?: string[]
   updated_at?: string
+  description?: string
 }
 
 /**
@@ -275,7 +422,8 @@ export async function gitlabItems(cwd: string): Promise<TaskFetch> {
         branchExists: true,
         labels: mr.labels ?? [],
         updatedAt: mr.updated_at ?? null,
-        reviewDecision: null
+        reviewDecision: null,
+        body: mr.description?.trim() || null
       })
     }
   } catch (err) {
@@ -299,7 +447,8 @@ export async function gitlabItems(cwd: string): Promise<TaskFetch> {
         branchExists: false,
         labels: issue.labels ?? [],
         updatedAt: issue.updated_at ?? null,
-        reviewDecision: null
+        reviewDecision: null,
+        body: issue.description?.trim() || null
       })
     }
   } catch (err) {
@@ -353,6 +502,7 @@ interface LinearIssueNode {
   state: { name: string; type: string }
   assignee: { displayName?: string; name?: string } | null
   labels: { nodes: { name: string }[] }
+  description: string | null
 }
 
 export async function linearItems(): Promise<TaskFetch> {
@@ -364,7 +514,7 @@ export async function linearItems(): Promise<TaskFetch> {
       `query Assigned($first: Int!) {
         issues(first: $first, filter: { completedAt: { null: true }, canceledAt: { null: true } }) {
           nodes {
-            id identifier title url branchName updatedAt
+            id identifier title url branchName updatedAt description
             state { name type }
             assignee { displayName name }
             labels { nodes { name } }
@@ -391,7 +541,8 @@ export async function linearItems(): Promise<TaskFetch> {
         branchExists: false,
         labels: node.labels.nodes.map((l) => l.name),
         updatedAt: node.updatedAt,
-        reviewDecision: null
+        reviewDecision: null,
+        body: node.description?.trim() || null
       })
     }
   } catch (err) {

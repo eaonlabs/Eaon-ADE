@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Compass, FileCode2, GitBranch, Inbox, Wrench } from 'lucide-react'
+import { FileCode2, Files, GitBranch, Inbox, Wrench } from 'lucide-react'
 import type { Workspace } from '@shared/types'
 import { useStore, type DockTab } from '../store/useStore'
 import { terminals } from '../lib/terminals'
-import { BrowserPanel } from './BrowserPanel'
 import { EditorPanel } from './EditorPanel'
+import { FileTree } from './FileTree'
 import { GitPanel } from './GitPanel'
 import { TasksPanel } from './TasksPanel'
 import { ToolsPanel } from './ToolsPanel'
 
-const TABS: { id: DockTab; label: string; icon: typeof Compass }[] = [
-  { id: 'browser', label: 'Browser', icon: Compass },
+const TABS: { id: DockTab; label: string; icon: typeof Files }[] = [
+  { id: 'files', label: 'Files', icon: Files },
   { id: 'editor', label: 'Editor', icon: FileCode2 },
   { id: 'git', label: 'Git', icon: GitBranch },
   { id: 'work', label: 'Work', icon: Inbox },
@@ -84,6 +84,7 @@ export function SideDock({ workspace }: { workspace: Workspace | null }): React.
         </div>
 
         <div className="dock-body">
+          {tab === 'files' && <FileTree cwd={cwd} key={cwd} />}
           {tab === 'editor' && (
             <EditorPanel cwd={cwd} workspaceId={workspace?.id} key={cwd} />
           )}
@@ -92,15 +93,6 @@ export function SideDock({ workspace }: { workspace: Workspace | null }): React.
           )}
           {tab === 'work' && <TasksPanel cwd={cwd} key={cwd} />}
           {tab === 'tools' && <ToolsPanel workspace={workspace} />}
-          {/*
-            The browser stays mounted and is hidden instead of unmounted. A
-            <webview> reloads its page from scratch when it re-attaches, so
-            switching to Git and back would otherwise cost you your scroll
-            position, your form, and whatever route a single-page app was on.
-          */}
-          <div className="dock-slot" hidden={tab !== 'browser'}>
-            <BrowserPanel />
-          </div>
         </div>
       </aside>
     </>

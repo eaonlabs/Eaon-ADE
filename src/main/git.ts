@@ -50,6 +50,58 @@ export async function branchOf(cwd: string, host?: SshHost | null): Promise<stri
   }
 }
 
+/**
+ * The local branches, current one first.
+ *
+ * Local only: a remote-tracking ref is not something you can be "on", and a
+ * list padded with a hundred `origin/*` entries is a list nobody reads. A
+ * branch that only exists on the remote is checked out by name anyway —
+ * `switchTo` lets git do its own `--guess`.
+ */
+export async function branches(cwd: string, host?: SshHost | null): Promise<string[]> {
+  try {
+    const out = await git(
+      cwd,
+      ['for-each-ref', '--format=%(refname:short)', '--sort=-committerdate', 'refs/heads/'],
+      host
+    )
+    const all = out.split('\n').map((l) => l.trim()).filter(Boolean)
+    const current = await branchOf(cwd, host)
+    // Current first, then most recently committed to — which is a far better
+    // ordering than alphabetical for a list you pick your next branch from.
+    return current ? [current, ...all.filter((b) => b !== current)] : all
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Move this checkout to another branch.
+ *
+ * Every tab of a project shares the project's folder, so this changes the
+ * branch for all of them at once — which is the point: a project is on one
+ * branch, not one per tab.
+ *
+ * `switch` rather than `checkout`: it refuses to throw away uncommitted work
+ * instead of silently carrying it across, and its error text says so in words
+ * worth showing the user verbatim.
+ */
+export async function switchTo(
+  cwd: string,
+  branch: string,
+  host?: SshHost | null
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    const out = await git(cwd, ['switch', branch], host)
+    return { ok: true, message: out.trim() || `On ${branch}.` }
+  } catch (err) {
+    // git's own words: "Your local changes would be overwritten" names the
+    // files, which is more use than anything this layer could invent.
+    const text = err instanceof Error ? err.message : String(err)
+    return { ok: false, message: text.split('\n').slice(0, 4).join('\n').trim() }
+  }
+}
+
 export async function status(cwd: string, host?: SshHost | null): Promise<GitStatus> {
   const empty: GitStatus = { repo: false, branch: null, ahead: 0, behind: 0, files: [] }
   try {

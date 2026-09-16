@@ -1,0 +1,94 @@
+/*
+ * Pages — the repository's own markdown, read as documents.
+ *
+ * Almost nothing new. The shell is the dock panel layout every other
+ * side-by-side surface uses (.panel / .panel-bar / .panel-split), the rendered
+ * document is the preview body's own styling, and the scroller is the one the
+ * preview pane already scrolls with. What is here is the list on the left,
+ * which is a row shape the app did not have yet: a document name with the
+ * folder it came from underneath it.
+ */
+
+.pages-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 7px;
+}
+
+/*
+ * Secondary text here is `--text-lo`, not `--text-dim`.
+ *
+ * `--text-dim` is the dimmest step the app derives, and measured across all 20
+ * themes it clears WCAG's 3:1 floor in none of them — 1.62 at worst, 2.84 at
+ * best. That is fine for a glyph sitting beside a label it merely decorates,
+ * and not fine for anything you actually read. Everything below that carries a
+ * value — a line number, a path, a count — sits a step brighter.
+ */
+
+.pages-count {
+  color: var(--text-lo);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+
+.pages-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-mid);
+  text-align: left;
+  cursor: pointer;
+}
+.pages-row:hover {
+  background: var(--ink-200);
+  color: var(--text-hi);
+}
+.pages-row:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-wash);
+}
+/* The one being read. Held in the accent rather than a hover shade, so it
+   still reads as chosen once the pointer has gone somewhere else. */
+.pages-row[data-on='true'] {
+  background: var(--accent-wash);
+  color: var(--text-hi);
+}
+.pages-row svg {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+.pages-row[data-on='true'] svg {
+  color: var(--accent);
+}
+
+.pages-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.pages-name {
+  font-size: var(--fs-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Where the document came from. Two files called README are only telling you
+   apart by this line, so it is present whenever the file is not at the top. */
+.pages-dir {
+  color: var(--text-lo);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

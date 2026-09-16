@@ -37,6 +37,14 @@ export interface ThemeSpec {
   cursor?: string
   /** black, red, green, yellow, blue, magenta, cyan, white, then the 8 bright. */
   ansi: readonly string[]
+  /**
+   * Kept out of the Appearance list until it has been found.
+   *
+   * Nothing is gated behind this — a secret theme is a theme. It is only
+   * absent from the grid until `Settings.foundThemes` names it, and once
+   * found it behaves like every other palette, including across restarts.
+   */
+  secret?: boolean
 }
 
 export interface ThemeTokens {
@@ -98,6 +106,7 @@ export interface Theme {
   mode: ThemeMode
   tokens: ThemeTokens
   terminal: TerminalPalette
+  secret?: boolean
 }
 
 // ---- colour helpers -----------------------------------------------------
@@ -225,7 +234,8 @@ function build(spec: ThemeSpec): Theme {
     blurb: spec.blurb,
     mode: spec.mode,
     tokens: buildTokens(spec),
-    terminal: buildTerminal(spec)
+    terminal: buildTerminal(spec),
+    secret: spec.secret
   }
 }
 
@@ -249,6 +259,31 @@ const SPECS: ThemeSpec[] = [
     ansi: [
       '#0f0f0f', '#d9483b', '#a3b86c', '#f2c14e', '#6e93b8', '#c98bb0', '#7fb5ad', '#d6d3cb',
       '#5c5a55', '#f17455', '#bcd18a', '#ffd977', '#8fb4d8', '#e3a8cb', '#9ed4cb', '#f4f2ee'
+    ]
+  },
+  {
+    id: 'superset',
+    name: 'Superset',
+    blurb: 'Warm near-black and terracotta, after superset.sh.',
+    mode: 'dark',
+    // Read out of the shipped app's own stylesheet rather than sampled off a
+    // screenshot: `--background`, `--card`, `--foreground`, `--sidebar-primary`
+    // and friends in Superset 1.29.0's renderer CSS. The greys are warm — every
+    // one of them carries a little more red than green than blue — which is
+    // what keeps the coral from reading as a sore thumb against them.
+    bg: '#151110',
+    deep: '#0f0c0b',
+    // Its surfaces climb #1a1716 → #201e1c → #252220 → #2a2827; that ladder is
+    // a warm grey pulled toward this, which is #2a2827's own hue carried up.
+    raise: '#a8a5a3',
+    fg: '#eae8e6',
+    accent: '#e07850',
+    live: '#5fb37f',
+    attention: '#e5c07b',
+    danger: '#cc4444',
+    ansi: [
+      '#151110', '#cc4444', '#5fb37f', '#e5c07b', '#7b9fd4', '#b48ead', '#6fb3b8', '#a8a5a3',
+      '#4a4847', '#e07850', '#7ee787', '#f2cc60', '#79c0ff', '#d2a8ff', '#8fd4d8', '#eae8e6'
     ]
   },
   {
@@ -551,6 +586,35 @@ const SPECS: ThemeSpec[] = [
     ansi: [
       '#5c5f77', '#d20f39', '#40a02b', '#df8e1d', '#1e66f5', '#ea76cb', '#179299', '#acb0be',
       '#6c6f85', '#d20f39', '#40a02b', '#df8e1d', '#1e66f5', '#ea76cb', '#179299', '#bcc0cc'
+    ]
+  },
+  {
+    /*
+     * Not in the Appearance grid until it is found. See `secret` above.
+     *
+     * A P1 phosphor tube was monochrome, so the honest version of this palette
+     * would map all sixteen ANSI slots onto one green and make every syntax
+     * highlighter useless. These hues stay inside the green-amber end of the
+     * spectrum a phosphor tube actually reached, but keep enough separation
+     * that a diff still reads as a diff. Nostalgia stops where legibility does.
+     */
+    id: 'phosphor',
+    name: 'Phosphor',
+    blurb: 'P1 green on black, the way the tube did it.',
+    mode: 'dark',
+    secret: true,
+    bg: '#0b100c',
+    deep: '#060a07',
+    raise: '#6f9a78',
+    fg: '#c9f2cf',
+    accent: '#3ef07a',
+    live: '#3ef07a',
+    attention: '#e8e45c',
+    danger: '#ff6b5e',
+    cursor: '#3ef07a',
+    ansi: [
+      '#0b100c', '#e2705f', '#4fd97a', '#d8c85f', '#6fa8a0', '#a9c07e', '#5fd0b4', '#b8d8bd',
+      '#3a4a3d', '#ff8a76', '#6ff09a', '#f0e07a', '#8fc4bb', '#c6dc9a', '#7ae8cc', '#dff5e4'
     ]
   }
 ]

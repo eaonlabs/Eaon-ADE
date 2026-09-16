@@ -76,6 +76,50 @@ const AGENT_BY_BIN = new Map(
   AGENTS.filter((a) => a.bin && SESSION_FLAGS[a.id]).map((a) => [a.bin, a.id])
 )
 
+/**
+ * *Every* agent, keyed by its binary — not just the resumable ones.
+ *
+ * `AGENT_BY_BIN` above is deliberately narrow: it answers "can this pane's
+ * conversation be reopened", and only Claude Code can. This one answers a
+ * different question — "what is running in this pane right now" — which is
+ * what the pane header's mark and name are showing. Close Codex, type
+ * `opencode`, and the header has to stop claiming Codex even though neither
+ * agent keeps a resumable session.
+ */
+const ANY_AGENT_BY_BIN = new Map(AGENTS.filter((a) => a.bin).map((a) => [a.bin, a.id]))
+
+/** Which agent a command line is, counting every agent rather than only the
+ *  resumable ones. Same word-boundary care as `agentOf`. */
+export function runningAgentOf(args: string): string | null {
+  const words = args.split(/\s+/)
+  const first = ANY_AGENT_BY_BIN.get(path.basename(words[0] ?? ''))
+  if (first) return first
+  if (!RUNTIMES.has(path.basename(words[0] ?? ''))) return null
+  return ANY_AGENT_BY_BIN.get(path.basename(words[1] ?? '')) ?? null
+}
+
+/**
+ * The agent running under a pane's shell, counting every agent.
+ *
+ * Separate from `agentUnder` because that one stops at the first *resumable*
+ * agent; this one stops at the first agent of any kind. Breadth first for the
+ * same reason: an agent that spawns a nested copy of itself should still be
+ * reported as the outer one.
+ */
+export function anyAgentUnder(shellPid: number, kids: Map<number, Proc[]>): string | null {
+  const queue = [...(kids.get(shellPid) ?? [])]
+  const seen = new Set<number>()
+  while (queue.length) {
+    const proc = queue.shift()!
+    if (seen.has(proc.pid)) continue
+    seen.add(proc.pid)
+    const id = runningAgentOf(proc.args)
+    if (id) return id
+    queue.push(...(kids.get(proc.pid) ?? []))
+  }
+  return null
+}
+
 /** Runtimes that run an agent as a script, where the name is the next word along. */
 const RUNTIMES = new Set(['node', 'bun', 'deno', 'python', 'python3'])
 
@@ -216,10 +260,19 @@ export class SessionWatch {
   private watched = new Map<string, Watched>()
   /** Ticks never overlap; a slow `ps` must not start a second pass. */
   private busy = false
+  /** What each pane was last reported as running, so only changes are sent. */
+  private running = new Map<string, string>()
 
   constructor(
     private readonly pids: () => Map<string, number>,
-    private readonly store: PaneSessions
+    private readonly store: PaneSessions,
+    /**
+     * Told when the agent running in a pane changes — including to nothing.
+     * Rides this tick rather than polling on its own: the process table is
+     * already being read here, and reading it twice a tick to answer two
+     * questions about the same processes would be waste.
+     */
+    private readonly onRunningAgent?: (paneId: string, agentId: string | null) => void
   ) {}
 
   start(): void {
@@ -259,6 +312,22 @@ export class SessionWatch {
       }
 
       const open: { paneId: string; w: Watched }[] = []
+
+      // What is running in each pane, for the header's mark and name. Done
+      // for every pane before the session work below, because a pane with no
+      // resumable agent still has an agent worth naming.
+      if (this.onRunningAgent) {
+        for (const [paneId, shellPid] of panes) {
+          const now = anyAgentUnder(shellPid, kids) ?? ''
+          if (this.running.get(paneId) !== now) {
+            this.running.set(paneId, now)
+            this.onRunningAgent(paneId, now || null)
+          }
+        }
+        for (const paneId of [...this.running.keys()]) {
+          if (!panes.has(paneId)) this.running.delete(paneId)
+        }
+      }
 
       for (const [paneId, shellPid] of panes) {
         const proc = agentUnder(shellPid, kids)

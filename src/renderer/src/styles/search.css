@@ -1,0 +1,171 @@
+/*
+ * Find in files.
+ *
+ * The shell is the panel every other full-surface page uses; what is new is the
+ * result list, which is two row shapes stacked — a file heading, then the lines
+ * found in it. The lines are monospaced and never wrap: a matching line is code
+ * being scanned down a column, and wrapping turns that column into prose.
+ */
+
+.search-page .panel-bar {
+  gap: 10px;
+}
+
+/*
+ * Secondary text here is `--text-lo`, not `--text-dim`.
+ *
+ * `--text-dim` is the dimmest step the app derives, and measured across all 20
+ * themes it clears WCAG's 3:1 floor in none of them — 1.62 at worst, 2.84 at
+ * best. That is fine for a glyph sitting beside a label it merely decorates,
+ * and not fine for anything you actually read. Everything below that carries a
+ * value — a line number, a path, a count — sits a step brighter.
+ */
+
+.sr-clear {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-lo);
+  cursor: pointer;
+}
+.sr-clear:hover {
+  background: var(--ink-200);
+  color: var(--text-hi);
+}
+
+.sr-count {
+  flex: 0 0 auto;
+  color: var(--text-lo);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  white-space: nowrap;
+}
+
+.sr-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.sr-list {
+  padding: 6px;
+}
+/* A search is running and these are the previous one's answers. Dimmed rather
+   than cleared, because blanking the list on every keystroke is the flicker
+   this avoids — the old answer is still the best one available. */
+.sr-list[data-stale='true'] {
+  opacity: 0.55;
+}
+
+.sr-file {
+  margin-bottom: 10px;
+}
+
+.sr-file-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  color: var(--text-mid);
+  /* Held in place while its lines scroll past, so you never lose track of
+     which file you are reading matches from. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--ink-000);
+}
+.sr-file-head svg {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.sr-file-name {
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+/* The path, which is how two files of the same name are told apart. Truncated
+   from the left: the end of a path says more than its beginning. */
+.sr-file-dir {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-lo);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.sr-file-count {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--ink-200);
+  color: var(--text-lo);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+
+.sr-hit {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-mid);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  text-align: left;
+  cursor: pointer;
+}
+.sr-hit:hover {
+  background: var(--ink-200);
+  color: var(--text-hi);
+}
+.sr-hit:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-wash);
+}
+
+/* Right-aligned in a fixed column so the line text starts on one edge however
+   many digits the numbers happen to have. */
+.sr-no {
+  flex: 0 0 auto;
+  width: 40px;
+  color: var(--text-lo);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One line, never wrapped, clipped where it runs out. The main process already
+   windowed anything long around its match, so what arrives here is the part
+   worth reading. */
+.sr-line {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.sr-mark {
+  border-radius: 2px;
+  background: var(--accent-wash);
+  color: var(--text-hi);
+}
+
+.sr-capped {
+  margin: 2px 6px 6px;
+}

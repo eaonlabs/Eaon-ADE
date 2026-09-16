@@ -94,9 +94,8 @@ export function SpeechPanel(): React.JSX.Element {
   return (
     <>
       <p className="settings-lede">
-        When an agent stops working, its pane says so — “Ada has finished.” Useful when you have
-        eight of them running and you would rather not watch the grid. The voice is your Mac's own,
-        so nothing is downloaded and nothing is sent anywhere.
+        The pane names the one that stopped — “Ada has finished.” The voice is your Mac's own, so
+        nothing is downloaded and nothing is sent anywhere.
       </p>
 
       <Row

@@ -10,6 +10,8 @@ import {
   NAME_POOL,
   PANEL_LABEL,
   type PaneKind,
+  PANEL_KINDS,
+  projectOf,
   type PaneSpec,
   type PaneStatus,
   type PersistedState,
@@ -20,22 +22,41 @@ import {
   type SurfaceId,
   type VaultNote,
   type Workspace,
-  type WorkspaceFolder,
-  type WorkspaceKind
+  type WorkspaceFolder
 } from '@shared/types'
 import { memberLabel, slugify, type Trial, type TrialMember } from '@shared/worktrees'
 import { hostLabel, type SshHost } from '@shared/ssh'
-import { branchNameFor, type WorkItem } from '@shared/tasks'
+import { branchNameFor, promptForWorkItem, type WorkItem } from '@shared/tasks'
+import { firesOnOpen, type Automation } from '@shared/automations'
 import type { DownloadProgress, InstalledModel, SttEngineState } from '@shared/stt'
 import { IDLE_UPDATE_STATE, type UpdateState } from '@shared/update'
 import { terminals } from '../lib/terminals'
 import { forgetPane } from '../lib/speech'
 import { basename, uid } from '../lib/util'
 
-export type DockTab = 'browser' | 'editor' | 'git' | 'work' | 'tools'
+export type DockTab = 'files' | 'editor' | 'git' | 'work' | 'tools'
+
+/**
+ * A rail destination that takes the stage instead of being a workspace.
+ *
+ * Workspaces are *places you work*; these are places you *look things up*.
+ * Keeping them off the workspace list is deliberate — opening Pull requests
+ * should not leave a card in the rail you then have to close, the way opening
+ * the Board does.
+ */
+export type StagePage = 'automations' | 'pulls' | 'pages' | 'search'
 
 /** The workspace kinds that hold a surface rather than shells. */
-export type PanelKind = Exclude<WorkspaceKind, 'terminals'>
+/**
+ * The one-per-app surfaces the rail offers as chips.
+ *
+ * Derived from `PANEL_KINDS`, not by excluding 'terminals' from every kind: a
+ * browser is a workspace kind too, and under the old definition adding it
+ * silently made it a "panel" — `openPanel` would have tried to look up a label
+ * for it and the rail would have offered it as a chip. A list that says what
+ * it contains cannot go wrong that way.
+ */
+export type PanelKind = (typeof PANEL_KINDS)[number]
 
 export interface Notice {
   id: string
@@ -86,6 +107,8 @@ interface AppState {
   dismissedResume: string[]
   /** Isolated runs, keyed to the workspace that holds their panes. */
   trials: Trial[]
+  /** Saved prompts with triggers. */
+  automations: Automation[]
 
   wizard: WizardDraft | null
   railOpen: boolean
@@ -151,7 +174,22 @@ interface AppState {
    */
   openWorkItem: (item: WorkItem) => Promise<{ ok: boolean; error?: string }>
 
+  /**
+   * What is actually running in a pane, as observed rather than as opened.
+   * Null when nothing is: the pane falls back to a plain shell.
+   */
+  setPaneAgent: (paneId: string, agentId: string | null) => void
   setActiveWorkspace: (id: string) => void
+  /**
+   * Another tab of the project the given workspace belongs to.
+   *
+   * The first tab of a project works in the repository itself; every tab after
+   * it gets its own git worktree on its own branch, because two agents in two
+   * tabs of one project must not be able to overwrite each other's files.
+   */
+  openTab: (workspaceId: string) => Promise<{ ok: boolean; error?: string }>
+  /** A browser, as a tab of the same project. */
+  openBrowserTab: (workspaceId: string) => void
   closeWorkspace: (id: string) => void
   /** Ends every shell in a workspace but keeps the workspace and its panes. */
   stopWorkspace: (id: string) => void
@@ -194,10 +232,30 @@ interface AppState {
   touchRecent: (path: string) => void
 
   updateSettings: (patch: Partial<Settings>) => void
-  openPanel: (kind: PanelKind) => void
+  /**
+   * Go to a panel, making it if it is not there yet.
+   *
+   * `at` names the project it should belong to. It matters for the Brain,
+   * which is one per folder: without it the panel inherits the cwd of whatever
+   * you happened to be in, so opening the Brain from a worktree tab would make
+   * a second Brain for the same repository.
+   */
+  openPanel: (kind: PanelKind, at?: string) => void
   toggleRail: () => void
   toggleDock: (tab?: DockTab) => void
   setDockTab: (tab: DockTab) => void
+  /** Non-workspace destination on the stage, or null for the workspace. */
+  stagePage: StagePage | null
+  setStagePage: (page: StagePage | null) => void
+  /**
+   * Hand a path to the editor and bring it forward. Set by the file tree and
+   * by a search hit — which also knows the line, so the editor can land on it
+   * rather than at the top of a thousand-line file.
+   */
+  openFileInEditor: (path: string, line?: number) => void
+  /** The path the editor should open next, cleared once it has. */
+  editorTarget: { path: string; line?: number } | null
+  clearEditorTarget: () => void
   setDockWidth: (w: number) => void
   toggleConductor: () => void
   setPalette: (open: boolean) => void
@@ -210,6 +268,10 @@ interface AppState {
   dismissNotice: (id: string) => void
   clearNotices: () => void
 
+  /** Opens a workspace for this automation and stamps its last run. */
+  runAutomation: (a: Automation) => void
+  saveAutomation: (a: Automation) => void
+  deleteAutomation: (id: string) => void
   saveCard: (card: BoardCard) => void
   deleteCard: (id: string) => void
   saveNote: (note: VaultNote) => void
@@ -276,6 +338,21 @@ let persistTimer: number | null = null
  */
 export const pendingPrompts = new Map<string, string>()
 
+/**
+ * Workspaces whose `onOpen` automations have already been dealt with.
+ *
+ * Kept here rather than in the store because it is not state anyone should see
+ * or persist — it exists only to stop a trigger firing twice, and "twice" is
+ * measured per run of the app. Flipping between two workspaces all afternoon
+ * fires each one's automations once.
+ *
+ * A workspace an automation *created* is added the moment it appears, which is
+ * what stops the obvious loop: the new workspace has the same folder as the
+ * automation that opened it, so without this, clicking it would run the
+ * automation again, and again.
+ */
+const openHandled = new Set<string>()
+
 export const useStore = create<AppState>((set, get) => ({
   ready: false,
   home: '',
@@ -293,11 +370,14 @@ export const useStore = create<AppState>((set, get) => ({
   vault: [],
   dismissedResume: [],
   trials: [],
+  automations: [],
 
   wizard: null,
   railOpen: true,
   dockOpen: false,
   dockTab: 'editor',
+  editorTarget: null,
+  stagePage: null,
   dockWidth: 460,
   // Closed on launch. It floats over the bottom row, so it has to be asked for
   // (⌘J) rather than turn up in front of your terminals every time.
@@ -392,7 +472,8 @@ export const useStore = create<AppState>((set, get) => ({
       board: saved.board ?? [],
       vault: saved.vault ?? [],
       dismissedResume: saved.dismissedResume ?? [],
-      trials: saved.trials ?? []
+      trials: saved.trials ?? [],
+      automations: saved.automations ?? []
     })
 
     void get().refreshStt()
@@ -449,7 +530,8 @@ export const useStore = create<AppState>((set, get) => ({
         board: s.board,
         vault: s.vault,
         dismissedResume: s.dismissedResume,
-        trials: s.trials
+        trials: s.trials,
+        automations: s.automations
       }
       window.eaon.state.save(snapshot)
     }, 400)
@@ -509,6 +591,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({
       workspaces: [...s.workspaces, workspace],
       activeWorkspaceId: workspace.id,
+      stagePage: null,
       wizard: null
     })
     // A remote path is not a local folder to suggest back in the picker.
@@ -610,6 +693,7 @@ export const useStore = create<AppState>((set, get) => ({
       workspaces: [...s.workspaces, workspace],
       trials: [...s.trials, trial],
       activeWorkspaceId: workspace.id,
+      stagePage: null,
       wizard: null
     })
     if (!host) get().touchRecent(draft.cwd)
@@ -647,6 +731,96 @@ export const useStore = create<AppState>((set, get) => ({
     return merged
   },
 
+  setPaneAgent(paneId, agentId) {
+    const next = agentId ?? 'shell'
+    const s = get()
+    let touched = false
+    const workspaces = s.workspaces.map((w) => {
+      if (!w.panes.some((p) => p.id === paneId && p.agentId !== next)) return w
+      touched = true
+      return { ...w, panes: w.panes.map((p) => (p.id === paneId ? { ...p, agentId: next } : p)) }
+    })
+    // Only when it actually changed: this arrives on a timer, and rewriting
+    // state on every tick would persist and re-render for nothing.
+    if (!touched) return
+    set({ workspaces })
+    get().persist()
+  },
+
+  openBrowserTab(workspaceId) {
+    const s = get()
+    const from = s.workspaces.find((w) => w.id === workspaceId)
+    if (!from) return
+    const project = projectOf(from)
+    const workspace: Workspace = {
+      id: uid('w_'),
+      kind: 'browser',
+      name: 'Browser',
+      // The project's folder, so the tab sits with its siblings and a local
+      // dev server started in one of them is what this points at.
+      cwd: from.cwd,
+      hue: nextHue(s.workspaces),
+      layout: 0,
+      panes: [],
+      grid: null,
+      activePaneId: null,
+      zoomedPaneId: null,
+      folderId: from.folderId,
+      projectRoot: project,
+      createdAt: Date.now(),
+      host: from.host ?? null
+    }
+    set({
+      workspaces: [...s.workspaces, workspace],
+      activeWorkspaceId: workspace.id,
+      stagePage: null
+    })
+    get().persist()
+  },
+
+  async openTab(workspaceId) {
+    const s = get()
+    const from = s.workspaces.find((w) => w.id === workspaceId)
+    if (!from) return { ok: false, error: 'That workspace is gone.' }
+
+    // A tab is another set of agents in the same project, in the same folder,
+    // on the same branch. Not its own checkout: a project is on one branch,
+    // and git will not check one branch out into two worktrees anyway — the
+    // only way to have both would be a detached HEAD per tab, which makes
+    // committing from a tab a two-step dance for no gain.
+    const project = projectOf(from)
+    const siblings = s.workspaces.filter(
+      (w) => w.kind === 'terminals' && projectOf(w) === project
+    )
+
+    const names = pickNames(1, s.workspaces.flatMap((w) => w.panes.map((p) => p.name)))
+    const pane = makePane(names[0], from.cwd, s.settings.defaultAgentId)
+    const workspace: Workspace = {
+      id: uid('w_'),
+      name: `${basename(project)} ${siblings.length + 1}`,
+      cwd: from.cwd,
+      kind: 'terminals',
+      hue: nextHue(s.workspaces),
+      layout: 1,
+      panes: [pane],
+      grid: null,
+      activePaneId: pane.id,
+      zoomedPaneId: null,
+      folderId: from.folderId,
+      projectRoot: project,
+      createdAt: Date.now(),
+      host: from.host ?? null
+    }
+
+    set({
+      workspaces: [...s.workspaces, workspace],
+      activeWorkspaceId: workspace.id,
+      stagePage: null
+    })
+    get().persist()
+    return { ok: true }
+  },
+
   async openWorkItem(item) {
     const s = get()
     const active = s.workspaces.find((w) => w.id === s.activeWorkspaceId)
@@ -671,8 +845,15 @@ export const useStore = create<AppState>((set, get) => ({
 
     const names = pickNames(1, s.workspaces.flatMap((w) => w.panes.map((p) => p.name)))
     const pane = makePane(names[0], made.worktree.path, s.settings.defaultAgentId)
+    const workspaceId = uid('w_')
+    // The whole point of "send this to an agent" is that the agent starts
+    // briefed rather than at a cold shell. Same guard the wizard's own
+    // opening prompt uses: a plain shell has nothing to read it.
+    if (s.settings.defaultAgentId !== 'shell') {
+      pendingPrompts.set(workspaceId, promptForWorkItem(item))
+    }
     const workspace: Workspace = {
-      id: uid('w_'),
+      id: workspaceId,
       // The ref is what you were looking at in the list, so it is what the
       // rail should say — a slugified branch name would be a worse label for
       // the same thing.
@@ -692,7 +873,8 @@ export const useStore = create<AppState>((set, get) => ({
 
     set({
       workspaces: [...s.workspaces, workspace],
-      activeWorkspaceId: workspace.id
+      activeWorkspaceId: workspace.id,
+      stagePage: null
     })
     get().persist()
     return { ok: true }
@@ -720,9 +902,24 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   setActiveWorkspace(id) {
-    // Picking a workspace means "show me that workspace", so it leaves Settings.
-    set({ activeWorkspaceId: id, settingsOpen: false })
+    // Picking a workspace means "show me that workspace", so it leaves Settings
+    // — and any rail destination, which is laid over the workspace the same way.
+    set({ activeWorkspaceId: id, settingsOpen: false, stagePage: null })
     get().persist()
+
+    // First time this workspace has been opened this session: run anything
+    // waiting on its folder. Guarded so returning to it later is just a
+    // workspace switch, not another run.
+    if (openHandled.has(id)) return
+    openHandled.add(id)
+    const s = get()
+    const workspace = s.workspaces.find((w) => w.id === id)
+    // A remote folder is a path on another machine; matching it against a
+    // local automation's folder would be a coincidence, not the same place.
+    if (!workspace || workspace.host) return
+    for (const a of s.automations.filter((x) => firesOnOpen(x, workspace.cwd))) {
+      get().runAutomation(a)
+    }
   },
 
   closeWorkspace(id) {
@@ -905,6 +1102,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({
       workspaces: [...s.workspaces, workspace],
       activeWorkspaceId: workspace.id,
+      stagePage: null,
       resumeOpen: false
     })
     get().touchRecent(cwd)
@@ -1063,10 +1261,18 @@ export const useStore = create<AppState>((set, get) => ({
    * Opening one again brings it forward rather than stacking up duplicates.
    * How "again" is judged depends on the kind — see below.
    */
-  openPanel(kind) {
+  openPanel(kind, at) {
     const s = get()
     const source = s.workspaces.find((w) => w.id === s.activeWorkspaceId) ?? null
-    const cwd = source?.cwd || s.recents[0]?.path || s.home
+    /*
+     * `at` first: the caller knows which project it means.
+     *
+     * Otherwise the *project* of the workspace you are in, not its own folder.
+     * A worktree tab's folder is not the repository — so keying off it gave the
+     * same repository a second Brain per worktree, each pointed at a checkout
+     * that has no `.eaonbrain` in it at all.
+     */
+    const cwd = at || (source ? projectOf(source) : '') || s.recents[0]?.path || s.home
     // Wearing the colour of the folder it was opened from is what makes the
     // rail read as one project rather than a flat list.
     const hue = source?.hue ?? nextHue(s.workspaces)
@@ -1087,6 +1293,10 @@ export const useStore = create<AppState>((set, get) => ({
       set({
         workspaces: s.workspaces.map((w) => (w.id === existing.id ? { ...w, cwd, hue } : w)),
         activeWorkspaceId: existing.id,
+        // As in the branch below. A stage page outranks the workspace on the
+        // stage, so leaving one showing meant that going to a panel you had
+        // already opened looked like a click that did nothing.
+        stagePage: null,
         settingsOpen: false
       })
       get().persist()
@@ -1114,6 +1324,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({
       workspaces: [...s.workspaces, workspace],
       activeWorkspaceId: workspace.id,
+      stagePage: null,
       settingsOpen: false
     })
     get().persist()
@@ -1129,6 +1340,15 @@ export const useStore = create<AppState>((set, get) => ({
   /** Switching tabs inside the dock never closes it — only the toggle does. */
   setDockTab(tab) {
     set({ dockOpen: true, dockTab: tab })
+  },
+  setStagePage(page) {
+    set({ stagePage: page })
+  },
+  openFileInEditor(path, line) {
+    set({ dockOpen: true, dockTab: 'editor', editorTarget: { path, line } })
+  },
+  clearEditorTarget() {
+    set({ editorTarget: null })
   },
   setDockWidth(w) {
     set({ dockWidth: Math.min(880, Math.max(320, w)) })
@@ -1173,6 +1393,40 @@ export const useStore = create<AppState>((set, get) => ({
     set({ notices: [] })
   },
 
+  runAutomation(a) {
+    // The same path the setup wizard takes. `createWorkspace` attaches the
+    // prompt through pendingPrompts, so the agent is handed it once its shell
+    // is up — an automation is a remembered launch, not a second mechanism.
+    get().createWorkspace({
+      step: 2,
+      mode: 'grid',
+      cwd: a.cwd,
+      layout: 1,
+      agentId: a.agentId,
+      prompt: a.prompt,
+      presetId: null,
+      isolate: false,
+      host: null
+    })
+    // createWorkspace makes the new workspace active, so this is its id.
+    const created = get().activeWorkspaceId
+    if (created) openHandled.add(created)
+    get().saveAutomation({ ...a, lastRunAt: Date.now() })
+  },
+  saveAutomation(a) {
+    const s = get()
+    const exists = s.automations.some((x) => x.id === a.id)
+    set({
+      automations: exists
+        ? s.automations.map((x) => (x.id === a.id ? a : x))
+        : [a, ...s.automations]
+    })
+    get().persist()
+  },
+  deleteAutomation(id) {
+    set({ automations: get().automations.filter((a) => a.id !== id) })
+    get().persist()
+  },
   saveCard(card) {
     const s = get()
     const exists = s.board.some((c) => c.id === card.id)

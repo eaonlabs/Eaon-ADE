@@ -15,6 +15,7 @@ import {
   X
 } from 'lucide-react'
 import type { PaneSpec, Workspace } from '@shared/types'
+import { AgentMark, agentShortName } from './AgentMarks'
 import { useStore } from '../store/useStore'
 import { terminals } from '../lib/terminals'
 import { carriesFiles, lineFor, pathsFromDrop } from '../lib/drop'
@@ -265,9 +266,24 @@ export function TerminalPane({
       >
         <span className="pane-dot" />
         <span className="pane-index">{index + 1}</span>
+        {/*
+          The agent's own mark, then the handle. Both, in that order, because
+          they answer different questions: the mark says what is running here,
+          the name is what you call it — in the Conductor, in a spoken alert,
+          out loud to yourself. Six panes all running Claude would be six panes
+          called "Claude" if the mark replaced the name, which is exactly the
+          thing the handles exist to prevent.
+        */}
+        <span className="pane-agent" title={`Running ${agentShortName(pane.agentId)}`}>
+          <AgentMark agentId={pane.agentId} size={12} />
+        </span>
         <span className="pane-label">
           <span className="pane-name">{pane.name}</span>
-          {pane.title && <span className="pane-title">{pane.title}</span>}
+          {pane.title ? (
+            <span className="pane-title">{pane.title}</span>
+          ) : (
+            <span className="pane-agent-name">{agentShortName(pane.agentId)}</span>
+          )}
         </span>
 
         {pane.branch && (
