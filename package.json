@@ -18,6 +18,7 @@
     "check:accounts": "node scripts/check-accounts.mjs",
     "check:codex-usage": "node scripts/check-codex-usage.mjs",
     "check:usage-refresh": "node scripts/check-usage-refresh.mjs",
+    "check:gpu-contexts": "node scripts/check-gpu-contexts.mjs",
     "check:ssh": "node scripts/check-ssh.mjs",
     "check:ssh-worktrees": "node scripts/check-ssh-worktrees.mjs",
     "test:brain": "node scripts/test-brain-skill.mjs",

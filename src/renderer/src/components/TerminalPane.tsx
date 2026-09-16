@@ -113,6 +113,18 @@ export function TerminalPane({
     }
   }, [pane.id])
 
+  /*
+   * What the chip is showing, readable from inside the poll without the poll
+   * depending on it.
+   *
+   * It used to be a plain dependency, and the poll is what changes it — so
+   * every branch change tore the timer down, built another, and fired an
+   * immediate extra `git` on the way through. A ref is read at the moment the
+   * answer comes back, which is the value that actually matters.
+   */
+  const branchRef = useRef(pane.branch)
+  branchRef.current = pane.branch
+
   // Branch chip. Goes through the shared cache, so a grid of panes over one
   // folder costs a single `git` call rather than one per pane.
   useEffect(() => {
@@ -121,7 +133,7 @@ export function TerminalPane({
       // Nothing here is worth doing behind another window.
       if (document.hidden) return
       branchOf(pane.cwd, workspace.host).then((b) => {
-        if (live && b !== pane.branch) patchPane(pane.id, { branch: b })
+        if (live && b !== branchRef.current) patchPane(pane.id, { branch: b })
       })
     }
     read()
@@ -132,7 +144,10 @@ export function TerminalPane({
       window.clearInterval(id)
       document.removeEventListener('visibilitychange', read)
     }
-  }, [pane.id, pane.cwd, pane.branch, patchPane])
+    // `workspace.host` decides which machine is asked, so a change to it has to
+    // restart the poll. It survives a patchPane by reference, so naming it here
+    // costs no extra teardowns.
+  }, [pane.id, pane.cwd, workspace.host, patchPane])
 
   // ⌘F is caught by the app's shortcut layer, which cannot reach into a pane;
   // it names the pane instead and the pane opens its own search box.
