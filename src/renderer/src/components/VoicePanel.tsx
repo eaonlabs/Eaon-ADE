@@ -168,8 +168,7 @@ export function VoicePanel(): React.JSX.Element {
   return (
     <>
       <p className="settings-lede">
-        Dictation runs on this machine. Download a model once and your voice never leaves the
-        computer — no account, no API key, no audio sent anywhere. Hold{' '}
+        Download a model once — no account, no API key, no audio sent anywhere. Hold{' '}
         <span className="kbd">{holdKeyLabel(settings.voiceHoldKey, isMac)}</span> and speak, or
         press <span className="kbd">{MOD}⇧D</span> to start and stop by hand. Either way the
         words land wherever you were already typing.

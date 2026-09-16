@@ -331,7 +331,14 @@ function registerIpc(): void {
     // the pane was last seen running is known, which the renderer never learns.
     return ptys.spawn({
       ...req,
-      command: launchCommand({ ...req, observed: paneSessions?.get(req.paneId) })
+      command: launchCommand({
+        ...req,
+        observed: paneSessions?.get(req.paneId),
+        // Read at spawn time rather than carried on the pane, so turning the
+        // setting off takes effect on the next launch instead of only on panes
+        // created afterwards.
+        bypass: store?.load().settings.bypassPermissions ?? false
+      })
     })
   })
   ipcMain.on('pty:write', (_e, paneId: string, data: string) => ptys.write(paneId, data))
@@ -434,6 +441,7 @@ function registerIpc(): void {
   ipcMain.handle('fs:mime', (_e, file: string) => fsapi.mimeFor(file))
   ipcMain.handle('fs:write', (_e, file: string, text: string) => fsapi.writeFile(file, text))
   ipcMain.handle('fs:search', (_e, root: string, q: string) => fsapi.searchFiles(root, q))
+  ipcMain.handle('fs:grep', (_e, root: string, q: string) => fsapi.grepFiles(root, q, which))
   ipcMain.handle('fs:isDir', (_e, target: string) => fsapi.isDirectory(target))
   ipcMain.handle('fs:saveDropped', (_e, name: string, bytes: Uint8Array) =>
     fsapi.saveDropped(name, bytes)
@@ -458,6 +466,12 @@ function registerIpc(): void {
   )
   ipcMain.handle('git:branch', (_e, cwd: string, host?: SshHost | null) =>
     git.branchOf(cwd, host)
+  )
+  ipcMain.handle('git:branches', (_e, cwd: string, host?: SshHost | null) =>
+    git.branches(cwd, host)
+  )
+  ipcMain.handle('git:switch', (_e, cwd: string, branch: string, host?: SshHost | null) =>
+    git.switchTo(cwd, branch, host)
   )
   ipcMain.handle(
     'git:diff',
@@ -492,6 +506,16 @@ function registerIpc(): void {
     'tasks:createLinearIssue',
     (_e, input: { teamId: string; title: string; description?: string }) =>
       tasks.createLinearIssue(input)
+  )
+  ipcMain.handle('tasks:pullRequests', (_e, cwd: string, state: 'open' | 'merged' | 'all') =>
+    tasks.pullRequests(cwd, state)
+  )
+  ipcMain.handle('tasks:prDetail', (_e, cwd: string, number: number) => tasks.prDetail(cwd, number))
+  ipcMain.handle('tasks:prDiff', (_e, cwd: string, number: number) => tasks.prDiff(cwd, number))
+  ipcMain.handle(
+    'tasks:reviewPr',
+    (_e, cwd: string, number: number, event: 'approve' | 'comment' | 'request-changes', body?: string) =>
+      tasks.reviewPr(cwd, number, event, body)
   )
 
   // ---- ssh -----------------------------------------------------------------
@@ -780,7 +804,12 @@ app.whenReady().then(() => {
   paneSessions = new PaneSessions()
   // Watches for the agents nobody told the app about — the ones you start by
   // typing `claude` into a shell — so those panes come back too.
-  sessionWatch = new SessionWatch(() => ptys.pids(), paneSessions)
+  sessionWatch = new SessionWatch(() => ptys.pids(), paneSessions, (paneId, agentId) => {
+    // Close Codex, type `opencode`, and the pane's mark and name follow what
+    // is actually running rather than what it was opened as.
+    const wc = mainWindow?.webContents
+    if (wc && !wc.isDestroyed()) wc.send('pane:agent', { paneId, agentId })
+  })
   sessionWatch.start()
   // Before anything asks which models are installed.
   models.migrateFromPreviousName()

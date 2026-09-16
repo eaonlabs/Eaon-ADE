@@ -7,6 +7,7 @@ import { DEFAULT_THEME_ID } from './themes'
 import { DEFAULT_SEARCH_ENGINE } from './browser'
 import type { Trial } from './worktrees'
 import type { SshHost } from './ssh'
+import type { Automation } from './automations'
 
 export type PaneStatus = 'live' | 'idle' | 'attention' | 'exited'
 
@@ -84,7 +85,14 @@ export function paneKind(pane: PaneSpec): PaneKind {
  * they sit in the same rail so that opening the board is switching to something
  * rather than covering over what you were doing.
  */
-export type WorkspaceKind = 'terminals' | 'board' | 'vault' | 'brain' | 'stats'
+export type WorkspaceKind = 'terminals' | 'board' | 'vault' | 'brain' | 'stats' | 'browser'
+
+/**
+ * `browser` is deliberately absent from `PANEL_KINDS` below. The panel kinds
+ * are the one-per-app surfaces the rail offers as chips; a browser is not one
+ * of those — you open as many as you like, as tabs of a project, from the
+ * tab strip's own menu.
+ */
 
 /** Kinds that hold a surface instead of shells. */
 export const PANEL_KINDS = ['board', 'vault', 'brain', 'stats'] as const
@@ -96,8 +104,17 @@ export const PANEL_LABEL: Record<(typeof PANEL_KINDS)[number], string> = {
   stats: 'Stats'
 }
 
+/*
+ * Asked of `PANEL_KINDS`, not answered as "anything that is not terminals".
+ *
+ * The exclusion form was true right up until `browser` was added, and then it
+ * was worse than merely wrong: this is a type predicate, so it narrowed the
+ * caller to board|vault|brain|stats while letting a browser through at run
+ * time. Nothing downstream would have to be careless to break — it would be
+ * doing what the signature promised.
+ */
 export function isPanelKind(kind: WorkspaceKind): kind is (typeof PANEL_KINDS)[number] {
-  return kind !== 'terminals'
+  return (PANEL_KINDS as readonly string[]).includes(kind)
 }
 
 /**
@@ -139,6 +156,17 @@ export interface Workspace {
    * anything saved before folders existed, which reads the same as null.
    */
   folderId: string | null
+  /**
+   * The project this workspace is a tab of — the git repository root its `cwd`
+   * belongs to, shared by every tab of that project including the worktree
+   * ones, whose own `cwd` is a checkout somewhere under app data and so says
+   * nothing about where they came from.
+   *
+   * Absent on anything saved before tabs were scoped to projects; read
+   * `projectOf()` rather than this field directly, which falls back to `cwd`
+   * so an old workspace is simply a project of one.
+   */
+  projectRoot?: string | null
   createdAt: number
   /**
    * The remote box every pane in this workspace runs on, or null/absent for a
@@ -185,12 +213,28 @@ export interface Settings {
   lineHeight: number
   shell: string
   defaultAgentId: string
+  /**
+   * Start agents with their own permission prompting turned off.
+   *
+   * Applies to every launch, not just new panes — see BYPASS_FLAGS.
+   */
+  bypassPermissions: boolean
   cursorStyle: 'block' | 'bar' | 'underline'
   cursorBlink: boolean
   scrollback: number
   confirmClose: boolean
   reduceMotion: boolean
   bellAttention: boolean
+  /** A tab per workspace across the top of the stage, beside the rail. */
+  showWorkspaceTabs: boolean
+  /**
+   * Ids of themes marked `secret` that this install has turned up.
+   *
+   * A list rather than a flag so finding one never reveals the rest, and so a
+   * theme that is already in use cannot vanish from Appearance when a later
+   * version adds another one.
+   */
+  foundThemes: string[]
 
   // ---- voice dictation ---------------------------------------------------
   /** Catalogue id of the downloaded speech model to use. Empty means none yet. */
@@ -294,6 +338,8 @@ export interface PersistedState {
    * worktrees existed, which reads the same as none.
    */
   trials?: Trial[]
+  /** Saved prompts with triggers. Absent on anything saved before them. */
+  automations?: Automation[]
 }
 
 export interface ResumableSession {
@@ -365,6 +411,18 @@ export function agentKeepsSessions(agentId: string): boolean {
   return agentId in SESSION_FLAGS
 }
 
+/**
+ * The flag that stops an agent asking permission before each action.
+ *
+ * Only Claude Code is listed. The other agents spell this differently and each
+ * turns off a slightly different thing, so a wrong guess here would either be
+ * rejected on the command line or hand out more than was asked for — adding one
+ * is a deliberate act, not a pattern to extend by analogy.
+ */
+export const BYPASS_FLAGS: Record<string, string> = {
+  claude: '--dangerously-skip-permissions'
+}
+
 export const LAYOUTS = [1, 2, 4, 6, 8, 10, 12] as const
 
 /** Column count for a given pane count. Rows fall out of it. */
@@ -430,6 +488,11 @@ export const AGENTS: AgentDef[] = [
   { id: 'codex', label: 'Codex', bin: 'codex', args: [], blurb: 'OpenAI’s terminal agent' },
   { id: 'gemini', label: 'Gemini CLI', bin: 'gemini', args: [], blurb: 'Google’s terminal agent' },
   { id: 'aider', label: 'Aider', bin: 'aider', args: [], blurb: 'Pair programmer in your repo' },
+  { id: 'opencode', label: 'OpenCode', bin: 'opencode', args: [], blurb: 'Open-source terminal agent' },
+  { id: 'copilot', label: 'Copilot', bin: 'copilot', args: [], blurb: 'GitHub’s terminal agent' },
+  { id: 'mistral', label: 'Mistral Vibe', bin: 'vibe', args: [], blurb: 'Mistral’s terminal agent' },
+  { id: 'kimi', label: 'Kimi Code', bin: 'kimi', args: [], blurb: 'Moonshot’s terminal agent' },
+  { id: 'grok', label: 'Grok', bin: 'grok', args: [], blurb: 'xAI’s terminal agent' },
   { id: 'shell', label: 'Plain shell', bin: '', args: [], blurb: 'No agent, just a terminal' }
 ]
 
@@ -437,8 +500,36 @@ export const AGENTS: AgentDef[] = [
 export const NAME_POOL = [
   'Ada','Bo','Cleo','Dex','Esme','Flint','Gus','Hazel','Iris','Jax','Kit','Lark',
   'Mica','Nia','Otto','Pia','Quill','Remy','Sage','Tate','Uma','Vero','Wade','Xan',
-  'Yuri','Zev','Bram','Cove','Dune','Eero','Fen','Gale','Hollis','Ines','Juno','Knox'
+  'Yuri','Zev','Bram','Cove','Dune','Eero','Fen','Gale','Hollis','Ines','Juno','Knox',
+  'Aster','Briar','Cyra','Dara','Elio','Faro','Grey','Halo','Ida','Jem','Kali','Leif',
+  'Mabel','Neve','Orin','Pax','Quinn','Rhea','Silas','Tova','Ulric','Vale','Wren','Xara',
+  'Yara','Zola','Arlo','Basil','Cass','Dax','Enzo','Fable','Gwen','Hale','Ivo','Joss',
+  'Kiro','Lena','Mose','Nash','Olly','Pip','Ren','Skye','Talon','Uri','Vesper','Wick',
+  'Xene','Yuno','Zane','Ash','Blythe','Cato','Merrit','Ellis','Finch','Garnet','Hux','Isola',
+  'Season','Kade','Lior','Marnie','Niall','Onyx','Poe','Petrel','Reid','Sable','Toma','Ursa',
+  'Vito','Wolf','Xilo','Yale','Zephyr','Amara','Boaz','Coen','Delphine','Emrys','Fitz','Gideon',
+  'Corvin','Ivor','Jael','Kester','Liv','Marlowe','Ned','Oisin','Piran','Quirin','Rune','Seren',
+  'Torin','Ulla','Vasq','Willa','Xerxes','Yosef','Zephyrine','Aiko','Blaise','Cai','Dree','Eowyn',
+  'Fenris','Gael','Halcyon','Idris','Jarrah','Keir','Liora','Mireille','Niamh','Oskar','Petra','Quorra',
+  'Rhosyn','Sorin','Tamsin','Amadi','Vianne','Wynn','Xochi','Corwin','Zaid','Anouk','Bora','Cirrus',
+  'Dov','Elsen','Freya','Gwynn','Hesper','Isolde','Jareth','Kaia','Loki','Marek','Norah','Odette',
+  'Pell','Quila','Rilke','Sela','Teigan','Ulyss','Vespera','Wrenna','Xylo','Yves','Zorion','Amiel',
+  'Berit','Corin','Dashiell','Eiren','Farro','Gunnar','Danika','Inez','Jonas','Kestrel','Sarel','Mireio',
+  'Nix','Oswin','Prue','Quist','Rasa','Sonder','Tavi','Bellamy','Vail','Wyndham','Xael','Yseult',
+  'Zannah','Aleo','Bran','Coralie','Denis','Emmeline','Fennec','Garreth','Hiro','Innes','Jovan','Kellan',
+  'Lasse','Marisol','Nils','Orsolya','Pravin','Quenby','Roan','Saoirse'
 ]
+
+/**
+ * Which project a workspace is a tab of.
+ *
+ * Falls back to `cwd`, so a workspace saved before projects existed — or one
+ * opened on a folder that is not a repository at all — is a project of one
+ * rather than a special case every caller has to handle.
+ */
+export function projectOf(w: Pick<Workspace, 'cwd' | 'projectRoot'>): string {
+  return w.projectRoot ?? w.cwd
+}
 
 export const HUES = ['aqua', 'azure', 'violet', 'amber', 'rose', 'lime'] as const
 
@@ -452,6 +543,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lineHeight: 1,
   shell: '',
   defaultAgentId: 'claude',
+  bypassPermissions: true,
   // A filled block, the way Terminal.app does it — it inverts the character
   // underneath and stays legible at a glance across a grid of panes.
   cursorStyle: 'block',
@@ -460,6 +552,8 @@ export const DEFAULT_SETTINGS: Settings = {
   confirmClose: true,
   reduceMotion: false,
   bellAttention: true,
+  showWorkspaceTabs: true,
+  foundThemes: [],
 
   voiceModelId: '',
   voiceMicId: '',

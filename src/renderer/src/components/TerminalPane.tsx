@@ -15,6 +15,7 @@ import {
   X
 } from 'lucide-react'
 import type { PaneSpec, Workspace } from '@shared/types'
+import { AgentMark, agentShortName } from './AgentMarks'
 import { useStore } from '../store/useStore'
 import { terminals } from '../lib/terminals'
 import { carriesFiles, lineFor, pathsFromDrop } from '../lib/drop'
@@ -113,6 +114,18 @@ export function TerminalPane({
     }
   }, [pane.id])
 
+  /*
+   * What the chip is showing, readable from inside the poll without the poll
+   * depending on it.
+   *
+   * It used to be a plain dependency, and the poll is what changes it — so
+   * every branch change tore the timer down, built another, and fired an
+   * immediate extra `git` on the way through. A ref is read at the moment the
+   * answer comes back, which is the value that actually matters.
+   */
+  const branchRef = useRef(pane.branch)
+  branchRef.current = pane.branch
+
   // Branch chip. Goes through the shared cache, so a grid of panes over one
   // folder costs a single `git` call rather than one per pane.
   useEffect(() => {
@@ -121,7 +134,7 @@ export function TerminalPane({
       // Nothing here is worth doing behind another window.
       if (document.hidden) return
       branchOf(pane.cwd, workspace.host).then((b) => {
-        if (live && b !== pane.branch) patchPane(pane.id, { branch: b })
+        if (live && b !== branchRef.current) patchPane(pane.id, { branch: b })
       })
     }
     read()
@@ -132,7 +145,10 @@ export function TerminalPane({
       window.clearInterval(id)
       document.removeEventListener('visibilitychange', read)
     }
-  }, [pane.id, pane.cwd, pane.branch, patchPane])
+    // `workspace.host` decides which machine is asked, so a change to it has to
+    // restart the poll. It survives a patchPane by reference, so naming it here
+    // costs no extra teardowns.
+  }, [pane.id, pane.cwd, workspace.host, patchPane])
 
   // ⌘F is caught by the app's shortcut layer, which cannot reach into a pane;
   // it names the pane instead and the pane opens its own search box.
@@ -250,9 +266,24 @@ export function TerminalPane({
       >
         <span className="pane-dot" />
         <span className="pane-index">{index + 1}</span>
+        {/*
+          The agent's own mark, then the handle. Both, in that order, because
+          they answer different questions: the mark says what is running here,
+          the name is what you call it — in the Conductor, in a spoken alert,
+          out loud to yourself. Six panes all running Claude would be six panes
+          called "Claude" if the mark replaced the name, which is exactly the
+          thing the handles exist to prevent.
+        */}
+        <span className="pane-agent" title={`Running ${agentShortName(pane.agentId)}`}>
+          <AgentMark agentId={pane.agentId} size={12} />
+        </span>
         <span className="pane-label">
           <span className="pane-name">{pane.name}</span>
-          {pane.title && <span className="pane-title">{pane.title}</span>}
+          {pane.title ? (
+            <span className="pane-title">{pane.title}</span>
+          ) : (
+            <span className="pane-agent-name">{agentShortName(pane.agentId)}</span>
+          )}
         </span>
 
         {pane.branch && (

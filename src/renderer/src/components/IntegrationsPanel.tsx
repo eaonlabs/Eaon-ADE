@@ -119,9 +119,7 @@ export function IntegrationsPanel(): React.JSX.Element {
         </span>
       </div>
       <p className="settings-lede">
-        Panes inherit these, so an agent can push a branch or read an issue without being handed a
-        token in the prompt. Eaon reads what is already on your machine and never stores a
-        credential of its own.
+        Eaon reads what is already on your machine and never stores a credential of its own.
       </p>
 
       <div className="ig-list">

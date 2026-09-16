@@ -47,6 +47,33 @@ export interface WorkItem {
   updatedAt: string | null
   /** Pull requests only: APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, or null. */
   reviewDecision: string | null
+  /** The description text, when the provider has one to give. */
+  body: string | null
+}
+
+/** One file changed in a pull request, as `gh pr view --json files` reports it. */
+export interface PrFile {
+  path: string
+  additions: number
+  deletions: number
+  changeType: 'ADDED' | 'DELETED' | 'MODIFIED' | 'RENAMED' | 'COPIED' | 'CHANGED'
+}
+
+/**
+ * A pull request's full changeset — the diffstat and the file list, fetched
+ * once and cached by the panel. The diff text for any one file is a separate
+ * call ({@link TasksApi.prDiff}): fetching every file's patch up front for a
+ * PR nobody has expanded yet would be wasted work on a large changeset.
+ */
+export interface PrDetail {
+  number: number
+  title: string
+  url: string
+  baseRefName: string
+  additions: number
+  deletions: number
+  changedFiles: number
+  files: PrFile[]
 }
 
 /** A Linear team, for the selector on the "new issue" form. */
@@ -65,6 +92,29 @@ export interface TaskFetch {
    * carries items, and the second one is the only one the user can act on.
    */
   notes: { provider: TaskProvider; message: string }[]
+}
+
+/**
+ * What an agent is actually told, once a work item's worktree is open.
+ *
+ * `openWorkItem` used to leave the pane at a bare prompt — a real checkout of
+ * the right branch, with no word said about why. Sending a PR "to an agent"
+ * only means something if the agent starts already briefed: what it is
+ * looking at, the description the author wrote, and a link back for anything
+ * this could not say. A trimmed body caps a runaway PR description at a
+ * paragraph or two of context rather than paging an agent's entire prompt
+ * with someone else's changelog.
+ */
+export function promptForWorkItem(item: Pick<WorkItem, 'kind' | 'ref' | 'title' | 'body' | 'url'>): string {
+  const verb = item.kind === 'pr' ? 'Review and address' : 'Work on'
+  const noun = item.kind === 'pr' ? 'pull request' : 'issue'
+  const lines = [`${verb} ${noun} ${item.ref}: ${item.title}`, '', item.url]
+  const body = item.body?.trim()
+  if (body) {
+    const trimmed = body.length > 1200 ? `${body.slice(0, 1200)}…` : body
+    lines.push('', trimmed)
+  }
+  return lines.join('\n')
 }
 
 /** A branch name a provider would be happy with, from an issue title. */

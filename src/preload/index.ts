@@ -12,7 +12,8 @@ import type { Account, LoginState } from '../shared/accounts'
 import type { ProviderState } from '../shared/integrations'
 import type { Worktree, WorktreeChange } from '../shared/worktrees'
 import type { SshHost } from '../shared/ssh'
-import type { LinearTeam, TaskFetch } from '../shared/tasks'
+import type { GrepResult } from '../shared/grep'
+import type { LinearTeam, PrDetail, TaskFetch } from '../shared/tasks'
 import type { Stats } from '../shared/stats'
 import type {
   BrainGraph,
@@ -74,6 +75,16 @@ const api = {
     }
   },
 
+  /** The agent running in a pane, whenever it changes — including to nothing. */
+  paneAgents: {
+    onChange: (
+      handler: (e: unknown, payload: { paneId: string; agentId: string | null }) => void
+    ): (() => void) => {
+      ipcRenderer.on('pane:agent', handler)
+      return () => ipcRenderer.removeListener('pane:agent', handler)
+    }
+  },
+
   state: {
     load: (): Promise<PersistedState> => ipcRenderer.invoke('state:load'),
     save: (next: PersistedState): void => ipcRenderer.send('state:save', next),
@@ -99,6 +110,13 @@ const api = {
       ipcRenderer.invoke('fs:write', file, text),
     search: (root: string, q: string): Promise<DirEntry[]> =>
       ipcRenderer.invoke('fs:search', root, q),
+    /**
+     * Inside the files, rather than across their names. Capped hard in the
+     * main process — the result says when it stopped early rather than
+     * presenting a slice as the whole answer.
+     */
+    grep: (root: string, q: string): Promise<GrepResult> =>
+      ipcRenderer.invoke('fs:grep', root, q),
     isDir: (target: string): Promise<boolean> => ipcRenderer.invoke('fs:isDir', target),
     pickFolder: (startIn?: string): Promise<string | null> =>
       ipcRenderer.invoke('dialog:pickFolder', startIn),
@@ -133,6 +151,14 @@ const api = {
       ipcRenderer.invoke('git:status', cwd, host),
     branch: (cwd: string, host?: SshHost | null): Promise<string | null> =>
       ipcRenderer.invoke('git:branch', cwd, host),
+    branches: (cwd: string, host?: SshHost | null): Promise<string[]> =>
+      ipcRenderer.invoke('git:branches', cwd, host),
+    switch: (
+      cwd: string,
+      branch: string,
+      host?: SshHost | null
+    ): Promise<{ ok: boolean; message: string }> =>
+      ipcRenderer.invoke('git:switch', cwd, branch, host),
     diff: (cwd: string, file: string, staged: boolean, host?: SshHost | null): Promise<string> =>
       ipcRenderer.invoke('git:diff', cwd, file, staged, host),
     stage: (cwd: string, file: string, host?: SshHost | null): Promise<void> =>
@@ -184,7 +210,20 @@ const api = {
       title: string
       description?: string
     }): Promise<{ ok: boolean; message: string; url?: string }> =>
-      ipcRenderer.invoke('tasks:createLinearIssue', input)
+      ipcRenderer.invoke('tasks:createLinearIssue', input),
+    pullRequests: (cwd: string, state: 'open' | 'merged' | 'all'): Promise<TaskFetch> =>
+      ipcRenderer.invoke('tasks:pullRequests', cwd, state),
+    prDetail: (cwd: string, number: number): Promise<PrDetail | { error: string }> =>
+      ipcRenderer.invoke('tasks:prDetail', cwd, number),
+    prDiff: (cwd: string, number: number): Promise<Record<string, string>> =>
+      ipcRenderer.invoke('tasks:prDiff', cwd, number),
+    reviewPr: (
+      cwd: string,
+      number: number,
+      event: 'approve' | 'comment' | 'request-changes',
+      body?: string
+    ): Promise<{ ok: boolean; message: string }> =>
+      ipcRenderer.invoke('tasks:reviewPr', cwd, number, event, body)
   },
 
   /** Remote boxes: reading `~/.ssh/config` for the connect picker. */

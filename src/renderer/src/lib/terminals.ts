@@ -248,6 +248,12 @@ interface Runtime {
   webgl: WebglAddon | null
   /** How many times we have tried to get this pane back onto the GPU. */
   renderRetries: number
+  /**
+   * WebGL is not available at all here, so stop asking. Set only when building
+   * the addon throws — not when a context is released on purpose, which is a
+   * pane going off screen and expects to get one back.
+   */
+  gpuBlocked: boolean
   disposers: (() => void)[]
 }
 
@@ -560,6 +566,7 @@ class TerminalRegistry {
       spawned: false,
       webgl: null,
       renderRetries: 0,
+      gpuBlocked: false,
       disposers: []
     }
 
@@ -640,6 +647,7 @@ class TerminalRegistry {
    * quietly rather than leave a pane blank.
    */
   private attachRenderer(paneId: string, rt: Runtime): void {
+    if (rt.gpuBlocked) return
     try {
       const addon = new WebglAddon()
       addon.onContextLoss(() => {
@@ -662,16 +670,50 @@ class TerminalRegistry {
         if (rt.renderRetries >= 3) return
         rt.renderRetries += 1
         window.setTimeout(() => {
-          if (this.panes.get(paneId) !== rt || rt.webgl) return
+          // Only worth retrying for a pane still on screen. A hidden one has
+          // given its context up on purpose and will ask for another when it
+          // is next shown.
+          if (this.panes.get(paneId) !== rt || rt.webgl || !rt.host) return
           this.attachRenderer(paneId, rt)
         }, 800 * rt.renderRetries)
       })
       rt.term.loadAddon(addon)
       rt.webgl = addon
     } catch {
-      // No WebGL: xterm keeps the DOM renderer and the terminal still works.
+      /*
+       * No WebGL at all on this machine. xterm keeps the DOM renderer and the
+       * terminal still works — but this must be remembered, or every show of
+       * every pane would build another addon just to watch it throw.
+       */
       rt.webgl = null
+      rt.gpuBlocked = true
     }
+  }
+
+  /**
+   * Hands a pane's GPU context back while it is off screen.
+   *
+   * A browser will only keep so many WebGL contexts alive — this app asks for
+   * 32 — and drops the oldest without a word once that is passed. Terminals
+   * here outlive the components that show them, so a context was being held
+   * for every pane in every workspace you had visited, not for the panes you
+   * can actually see. Forty-three panes over sixteen workspaces against a
+   * ceiling of thirty-two is not a close thing: the panes you were looking at
+   * were the ones silently demoted to the DOM renderer, which is exactly the
+   * "it was fine and then it got slow" this file already warns about.
+   *
+   * Only the context goes. The terminal, its scrollback and its stream are
+   * untouched, so a background agent keeps working and its output is all still
+   * there when you come back.
+   */
+  private releaseRenderer(rt: Runtime): void {
+    if (!rt.webgl) return
+    try {
+      rt.webgl.dispose()
+    } catch {
+      /* already gone */
+    }
+    rt.webgl = null
   }
 
   /** Which renderer a pane ended up on. Surfaced in Settings › Terminal. */
@@ -684,6 +726,17 @@ class TerminalRegistry {
     if (rt.host === host) return
     rt.host = host
     host.appendChild(rt.wrapper)
+
+    /*
+     * Back on screen, so take a GPU context again. The budget spent while a
+     * pane is hidden is what used to push the visible ones off the GPU, and
+     * the retry count goes with it: it exists to stop a pane thrashing against
+     * a context it keeps losing, not to ration how often you may look at it.
+     */
+    if (!rt.webgl) {
+      rt.renderRetries = 0
+      this.attachRenderer(paneId, rt)
+    }
 
     rt.observer?.disconnect()
     rt.observer = new ResizeObserver(() => this.scheduleFit(paneId))
@@ -714,6 +767,9 @@ class TerminalRegistry {
     rt.observer = null
     if (rt.wrapper.parentElement) rt.wrapper.parentElement.removeChild(rt.wrapper)
     rt.host = null
+    // Nothing is drawing this pane now, so it has no use for a GPU context —
+    // and holding one is what starves the panes that are on screen.
+    this.releaseRenderer(rt)
   }
 
   fit(paneId: string): void {

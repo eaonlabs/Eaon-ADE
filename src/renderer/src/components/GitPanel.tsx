@@ -4,7 +4,7 @@ import type { GitFile, GitStatus } from '@shared/types'
 import type { SshHost } from '@shared/ssh'
 import { useStore } from '../store/useStore'
 
-function DiffView({ text }: { text: string }): React.JSX.Element {
+export function DiffView({ text }: { text: string }): React.JSX.Element {
   const lines = text.split('\n')
   return (
     <div className="diff">

@@ -17,8 +17,13 @@ import './styles/accounts.css'
 import './styles/integrations.css'
 import './styles/trial.css'
 import './styles/host-picker.css'
+// After the three sheets above: the row grammar they share.
+import './styles/settings-rows.css'
 import './styles/tasks.css'
 import './styles/preview.css'
+import './styles/pages.css'
+import './styles/search.css'
+import './styles/automations.css'
 import { App } from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
 

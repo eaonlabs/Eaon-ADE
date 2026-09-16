@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import { closeSync, createReadStream, openSync, readSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { AGENTS, SESSION_FLAGS, type ResumableSession } from '../shared/types'
+import { AGENTS, BYPASS_FLAGS, SESSION_FLAGS, type ResumableSession } from '../shared/types'
 import { isInside } from '../shared/paths'
 
 /**
@@ -443,6 +443,44 @@ export function launchCommand(req: {
   sessionId?: string | null
   cwd: string
   /** What this pane was last seen running, whoever started it. */
+  observed?: ObservedSession | null
+  /** Settings.bypassPermissions — start agents with their prompting off. */
+  bypass?: boolean
+}): string | null {
+  const line = resolveLaunch(req)
+  if (!req.bypass) return line
+  // Whichever branch produced the line decides whose agent it is: a resumed
+  // observation carries its own, because the pane's record may still say it is
+  // a plain shell.
+  return withBypass(line, req.observed?.agentId ?? req.agentId)
+}
+
+/**
+ * Appends the agent's skip-permissions flag, once.
+ *
+ * Applied here rather than where a pane is created because this is the only
+ * funnel every launch passes through — a new pane, a pane restored on reopen,
+ * and a conversation resumed from what was seen running all end up here. Doing
+ * it at pane-creation time would have covered only the first, and would also
+ * have baked the flag into `state.json`, where it would outlive the setting
+ * that asked for it.
+ *
+ * The flag goes last so it survives `cd … && claude --resume <id>`, where the
+ * binary is not the first word on the line.
+ */
+function withBypass(line: string | null, agentId: string | undefined): string | null {
+  if (!line || !agentId) return line
+  const flag = BYPASS_FLAGS[agentId]
+  // A command the user wrote themselves already saying it is left alone.
+  if (!flag || new RegExp(`(^|\\s)${flag}(\\s|=|$)`).test(line)) return line
+  return `${line} ${flag}`
+}
+
+function resolveLaunch(req: {
+  command?: string | null
+  agentId?: string
+  sessionId?: string | null
+  cwd: string
   observed?: ObservedSession | null
 }): string | null {
   const { command, agentId, sessionId, cwd, observed } = req
