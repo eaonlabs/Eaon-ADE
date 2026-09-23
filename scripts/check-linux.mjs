@@ -196,6 +196,13 @@ check(
   'the packaging script installs to a path with no space in it',
   /-c\.productName=eaon-ade/.test(distScript)
 )
+// electron-builder publishes on a tag by default and fails the whole build for
+// want of a token, after every artifact is already written. Uploading is the
+// release workflow's job, done on purpose.
+check(
+  'packaging never tries to publish by itself',
+  /'--publish',\s*\n?\s*'never'|--publish never/.test(distScript)
+)
 check(
   'and puts the readable name back in the launcher entry',
   linux.desktop?.entry?.Name === 'Eaon ADE'

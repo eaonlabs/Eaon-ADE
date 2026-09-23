@@ -81,7 +81,23 @@ const targets = target === 'arm64' ? TARGETS.filter((t) => t !== 'AppImage') : T
  * app.setName() at runtime, and the settings directory is unchanged — none of
  * them go through this path.
  */
-const args = ['electron-builder', '--linux', ...targets, '-c.productName=eaon-ade']
+/*
+ * --publish never, always.
+ *
+ * electron-builder's default is `onTagOrDraft`, so the moment this runs on a
+ * tag it tries to upload to GitHub and fails the build with "GitHub Personal
+ * Access Token is not set" — after every artifact has already been written
+ * successfully. Packaging and publishing are separate acts here: the release
+ * workflow uploads with `gh release upload`, deliberately and only when asked.
+ */
+const args = [
+  'electron-builder',
+  '--linux',
+  ...targets,
+  '-c.productName=eaon-ade',
+  '--publish',
+  'never'
+]
 if (target) args.push(`--${target}`)
 
 console.log(
