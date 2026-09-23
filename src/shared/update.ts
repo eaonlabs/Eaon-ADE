@@ -17,7 +17,7 @@ export type UpdatePhase =
   | 'ready'
   /** Something went wrong. `error` says what. */
   | 'error'
-  /** Updates cannot run in this build (unpackaged, or no feed configured). */
+  /** Updates cannot run in this build (unpackaged, no feed, or a distro package). */
   | 'unsupported'
 
 export interface UpdateState {
@@ -36,6 +36,14 @@ export interface UpdateState {
   error: string | null
   /** Epoch ms of the last completed check, for "checked just now". */
   lastCheckedAt: number | null
+  /**
+   * Why updating is unsupported, when there is something useful to say.
+   *
+   * Set for a Linux .deb or .rpm, where the answer is not "this build is
+   * broken" but "your package manager owns this app" — which the user can act
+   * on, and cannot guess.
+   */
+  unsupportedReason?: string | null
 }
 
 export const IDLE_UPDATE_STATE: UpdateState = {

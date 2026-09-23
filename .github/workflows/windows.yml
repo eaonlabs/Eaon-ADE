@@ -114,7 +114,7 @@ jobs:
               }
             }
 
-            node scripts/smoke-windows.mjs "$($exe.FullName)"
+            node scripts/smoke-app.mjs "$($exe.FullName)"
             if ($LASTEXITCODE -ne 0) { $failures += "$arch : the app did not pass" }
 
             # Out of the way before the next one, so each is tested on its own

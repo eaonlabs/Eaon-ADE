@@ -114,8 +114,94 @@ nsis:
   # not the same as saying the work in it was disposable.
   deleteAppDataOnUninstall: false
 linux:
+  icon: resources/icon.png
   category: Development
+  synopsis: Run many CLI coding agents side by side
+  description:
+    An agentic development environment. Opens a grid of terminals, each running
+    its own CLI coding agent, with a shared editor, git panel and task list.
+  # Spaces in an Exec= line and on the command line are a nuisance nobody on
+  # Linux expects. The window title and the data directory stay "Eaon ADE";
+  # only the binary is renamed.
+  executableName: eaon-ade
+  # Makes the installed .desktop filename match StartupWMClass and Electron's
+  # app id. Without all three agreeing, the running window does not attach to
+  # its launcher entry and the dock shows a second, iconless tile for it.
+  # electron-builder defaults this to false today and to true in v27.
+  syncDesktopName: true
+  desktop:
+    entry:
+      # Linux builds are packaged with productName=eaon-ade so the install
+      # directory has no space in it — see dist-linux.mjs — which would
+      # otherwise make the launcher read "eaon-ade". The pretty name is put
+      # back here, where it is the only thing a person actually sees.
+      Name: Eaon ADE
+      StartupWMClass: eaon-ade
+      Keywords: terminal;shell;agent;claude;codex;ai;developer;ide;
+      StartupNotify: 'true'
+  # The maintainer is not optional: dpkg refuses to build a package without
+  # one, and electron-builder reports it as "Please specify author 'email'"
+  # three errors deep in a build that has already produced the AppImage — so
+  # the deb silently fails to appear while everything looks like it worked.
+  maintainer: Eaon <sanscreates@users.noreply.github.com>
+  # Deliberately no `arch:` here.
+  #
+  # A target that names its own architectures overrides the `--arm64` or
+  # `--x64` on the command line, so electron-builder builds *both* whatever you
+  # asked for. On Linux that is not a slow build, it is a broken one: node-pty
+  # is compiled for the host and only the host, so the other architecture gets
+  # packaged around a binary it cannot load — and the rebuild attempt that
+  # precedes it deletes the good binary on its way to failing.
+  #
+  # Leaving arch unset lets the command line decide, which is what
+  # dist-linux.mjs and the per-architecture CI runners are for.
+  #
+  # AppImage is listed here but built for x86-64 only — dist-linux.mjs drops it
+  # on arm64. electron-builder's bundled AppImage runtime for arm64 (appimage
+  # 12.0.1) links against the unversioned `libz.so`, which ships in zlib1g-dev
+  # and on no ordinary desktop, so the image exits with
+  #   error while loading shared libraries: libz.so
+  # before the app is reached. The x86-64 runtime links `libz.so.1` and is
+  # fine. Verified with readelf on both runtimes. Raspberry Pi users get the
+  # .deb, which is the better fit for Raspberry Pi OS anyway.
   target:
-    - dir
+    # AppImage first: it is the one artifact that runs on a distro nobody
+    # planned for, which is what "any Linux" has to mean.
+    - AppImage
+    - deb
+    - rpm
+    # For package managers nobody wrote a target for, and for putting the app
+    # somewhere by hand on a machine you would rather not install onto.
+    - tar.gz
+  # Carry only this platform's native binaries, as the mac and win builds do.
   files:
     - '!**/node_modules/onnxruntime-node/bin/napi-v6/{darwin,win32}/**'
+    # node-pty publishes no Linux prebuild at all, so every directory in here
+    # belongs to another platform. What Linux loads is build/Release/pty.node,
+    # compiled at install time, which asarUnpack already keeps out of the
+    # archive.
+    - '!**/node_modules/node-pty/prebuilds/**'
+    - '!**/node_modules/node-pty/build/**/obj*/**'
+    - '!**/node_modules/@img/sharp-{darwin,win32}*/**'
+    - '!**/node_modules/@img/sharp-libvips-{darwin,win32}*/**'
+appImage:
+  # ${name}, not ${productName}: the product name has a space in it, GitHub
+  # turns a space in an asset name into a dot, and latest-linux.yml would still
+  # spell it the original way — which 404s both the download and every
+  # auto-update. The Windows release step has to rename files for exactly this
+  # reason; naming them correctly here avoids the problem instead.
+  artifactName: ${name}-${version}-${arch}.${ext}
+deb:
+  # Replaces electron-builder's post-install script to fix its sandbox probe,
+  # which runs as root and therefore always concludes that unprivileged user
+  # namespaces work. See the script for the failure it causes.
+  afterInstall: resources/linux-after-install.sh
+  # Left to electron-builder. Its default dependency list tracks the renames
+  # Debian keeps making — libgtk-3-0 became libgtk-3-0t64 in Ubuntu 24.04 —
+  # and a hand-written list here would pin the package to one distro's spelling
+  # and fail to install on the next.
+  artifactName: ${name}_${version}_${arch}.${ext}
+  priority: optional
+rpm:
+  afterInstall: resources/linux-after-install.sh
+  artifactName: ${name}-${version}-${arch}.${ext}

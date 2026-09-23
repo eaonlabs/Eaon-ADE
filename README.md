@@ -30,9 +30,10 @@ npm run dist:mac  # unpacked .app in dist/
 ```
 
 Requirements: Node 20+. On macOS, Xcode Command Line Tools (node-pty compiles
-against them); on Windows, nothing beyond Node — node-pty ships a prebuilt
-binary. If the Electron binary fails to download during install, run
-`node node_modules/electron/install.js`.
+against them); on Linux, a compiler and Python (`build-essential` and `python3`
+on Debian, Ubuntu and Raspberry Pi OS) for the same reason; on Windows, nothing
+beyond Node — node-pty ships a prebuilt binary there. If the Electron binary
+fails to download during install, run `node node_modules/electron/install.js`.
 
 ## What is in it
 
@@ -363,6 +364,111 @@ Electron version rather than trusted to have shipped the right prebuild.
 Installers are **not code-signed**. Windows SmartScreen will warn on first run
 until they are signed with an Authenticode certificate, which is a separate
 purchase from the Apple Developer membership the macOS build uses.
+
+## Linux
+
+Eaon ADE runs on x86-64 and arm64 Linux, which includes a **Raspberry Pi 4 or 5
+running 64-bit Raspberry Pi OS**. Panes are real pseudo-terminals, as on macOS,
+and open in your login shell.
+
+### Which download
+
+| File | For |
+| --- | --- |
+| `eaon-ade_<version>_<arch>.deb` | **Debian, Ubuntu, Raspberry Pi OS** |
+| `eaon-ade-<version>-<arch>.rpm` | Fedora, openSUSE, RHEL |
+| `eaon-ade-<version>-x86_64.AppImage` | any other distribution, x86-64 only — nothing is installed, mark it executable and run it |
+| `eaon-ade-<version>-<arch>.tar.gz` | unpack it wherever you like |
+
+Pick `arm64` on a Raspberry Pi, `x64`/`x86_64` on a normal PC.
+
+```bash
+# Debian, Ubuntu, Raspberry Pi OS
+sudo apt install ./eaon-ade_1.1.1_arm64.deb
+eaon-ade            # or find it in the applications menu
+
+# AppImage, x86-64
+chmod +x eaon-ade-1.1.1-x86_64.AppImage
+./eaon-ade-1.1.1-x86_64.AppImage
+```
+
+The app installs to `/opt/eaon-ade` and puts `eaon-ade` on your `PATH`.
+
+**There is no arm64 AppImage, deliberately.** The AppImage runtime
+electron-builder bundles for arm64 links against the unversioned `libz.so`,
+which ships in `zlib1g-dev` and on no ordinary desktop, so the image exits with
+`error while loading shared libraries: libz.so` before the app is reached. The
+x86-64 runtime links `libz.so.1` and is fine. On a Raspberry Pi install the
+`.deb`, which suits Raspberry Pi OS better anyway.
+
+The AppImage needs FUSE 2, which several distributions no longer install by
+default. Either `sudo apt install libfuse2` once, or run the image with
+`--appimage-extract-and-run` and skip FUSE entirely.
+
+### What is different here
+
+**Spoken alerts do not work.** They use macOS's own speech synthesiser, and
+Settings says so rather than offering a control that does nothing. Dictation —
+which runs a model on your own CPU — works normally.
+
+**Updates depend on how you installed it.** An AppImage replaces itself the way
+the macOS and Windows builds do. A `.deb` or `.rpm` belongs to your package
+manager, so the app does not reach in and swap its own files; Settings tells you
+to use `apt` or `dnf` instead.
+
+**On a locked-down kernel it still starts.** Some distributions switch off
+unprivileged user namespaces, and Chromium then needs its setuid sandbox
+helper instead. Two things had to be true for that to work and neither was:
+electron-builder's own post-install script decides whether the helper is needed
+by trying to create a namespace *as root*, which always succeeds and so never
+sets it up; and the helper's path may not contain a space, which `/opt/Eaon
+ADE/` did — Chromium splits it and fails with `failed to execvp: /opt/Eaon`.
+Linux packages therefore install to `/opt/eaon-ade`, and ship a corrected
+post-install script. Tested on Debian 12 with
+`kernel.unprivileged_userns_clone=0`.
+
+**32-bit is not built.** Older Pis running 32-bit Raspberry Pi OS are out of
+scope for the published artifacts: ONNX Runtime publishes no 32-bit build, so
+dictation could not work, and there is no 32-bit CI runner to compile node-pty
+on. Everything else would run, and building it on the Pi itself still works —
+see below.
+
+### Building it
+
+Linux packages have to be built **on Linux**, and on a machine of the target
+architecture:
+
+```bash
+npm run dist:linux      # AppImage, deb, rpm and tar.gz for this machine's arch
+```
+
+Running it anywhere else stops with an explanation rather than producing
+something broken. The reason is node-pty: unlike Windows, where it ships
+prebuilt binaries that a Mac can simply copy in, it publishes **no Linux
+prebuild at all** and is compiled at install time. A Linux package built on
+macOS therefore contains no pty binary — it would install, open a window, and
+then fail to start a single pane. That is the same judgement `dist:win` makes
+about 32-bit Windows.
+
+This also means arm64 cannot be built on an x86-64 machine, so
+`.github/workflows/linux.yml` uses one runner per architecture, builds on each,
+and then launches the result under Xvfb and checks that the window mounts, the
+preload bridge is wired and a pseudo-terminal actually opens. On a Raspberry Pi
+the same command works directly — `npm install` there compiles node-pty for the
+Pi and fetches the Pi's own sharp binary.
+
+`npm run check:linux` exercises the Linux-specific code paths and the packaging
+config from any machine, including this one.
+
+The arm64 packages were built and driven on a real Debian 12 arm64 machine:
+installed with `apt`, launched under Xvfb, and checked for a window, a live
+preload bridge, a pseudo-terminal that spawns and echoes, and the Ctrl+Shift
+keymap — on both a stock kernel and one with unprivileged user namespaces
+switched off. The x86-64 packages are built and driven the same way by
+`.github/workflows/linux.yml`.
+
+Packages are **not signed**. Nothing on Linux requires it, but `apt` will note
+that the `.deb` is unsigned when you install it by path.
 
 ## Cutting a release
 

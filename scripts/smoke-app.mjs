@@ -1,15 +1,19 @@
 /**
- * Drives an installed Eaon ADE on Windows and checks it actually works.
+ * Drives an installed Eaon ADE and checks it actually works.
  *
  * A build that packages is not a build that runs. Everything interesting here
- * is native — ConPTY through node-pty, the GPU renderer, the preload bridge —
- * and none of it can be exercised on the machine that cross-builds it. So this
- * runs against a real installation on a real Windows machine, attaches over the
- * DevTools protocol, and asks the running app the questions that matter:
- * did the window mount, is the bridge wired up, and can it open a shell and get
- * output back from it.
+ * is native — the pty (ConPTY on Windows, forkpty elsewhere), the GPU renderer,
+ * the preload bridge — and none of it can be exercised on the machine that
+ * cross-builds it. So this runs against a real installation on a real machine
+ * of that platform, attaches over the DevTools protocol, and asks the running
+ * app the questions that matter: did the window mount, is the bridge wired up,
+ * and can it open a shell and get output back from it.
  *
- *   node scripts/smoke-windows.mjs "C:\\path\\to\\Eaon ADE.exe"
+ * Nothing in here is platform-specific: it spawns the executable it is given
+ * and talks to it over a port. Both the Windows and Linux workflows use it.
+ *
+ *   node scripts/smoke-app.mjs "C:\\path\\to\\Eaon ADE.exe"
+ *   node scripts/smoke-app.mjs ./dist/linux-unpacked/eaon-ade
  */
 import { spawn } from 'node:child_process'
 
@@ -17,7 +21,7 @@ const EXE = process.argv[2]
 const PORT = Number(process.env.SMOKE_PORT || 9222)
 
 if (!EXE) {
-  console.error('usage: node scripts/smoke-windows.mjs <path to Eaon ADE.exe>')
+  console.error('usage: node scripts/smoke-app.mjs <path to the Eaon ADE executable>')
   process.exit(1)
 }
 
@@ -142,7 +146,19 @@ const env = await evaluate(`
       .catch(() => resolve(base))
   })
 `)
-check('it knows it is on Windows', String(env?.platform || '').startsWith('Win'), env?.platform)
+/*
+ * Which platform the *app* thinks it is on, which is the thing worth checking:
+ * a build that reports the wrong one has picked the wrong shell, the wrong
+ * keymap and the wrong window chrome. TARGET says what this run expects, and
+ * defaults to the platform the harness is running on.
+ */
+const TARGET = process.env.SMOKE_PLATFORM || (process.platform === 'win32' ? 'win32' : process.platform)
+const EXPECT = { win32: 'Win', linux: 'Linux', darwin: 'Mac' }[TARGET] ?? 'Linux'
+check(
+  `it knows it is on ${TARGET}`,
+  String(env?.platform || '').startsWith(EXPECT),
+  env?.platform
+)
 check('the preload bridge is attached', env?.hasBridge === true, env)
 for (const api of ['pty', 'stats', 'brain', 'sessions']) {
   check(`the ${api} bridge is present`, (env?.bridge ?? []).includes(api), env?.bridge)
@@ -172,15 +188,30 @@ const pty = await evaluate(`
 `)
 check('a pseudo-terminal spawns', pty?.spawned === true, pty?.error ?? pty)
 check(
-  'the shell echoes back through ConPTY',
+  'the shell echoes back through the pty',
   typeof pty?.output === 'string' && pty.output.includes('EAON_PTY_OK'),
   pty?.output
 )
-check(
-  'the shell it picked is PowerShell',
-  typeof pty?.output === 'string' && /PS\s|PowerShell/i.test(pty.output),
-  pty?.output?.slice(0, 200)
-)
+/*
+ * And that it chose a sensible shell for the platform. On Windows that means
+ * PowerShell rather than cmd.exe; on Linux it means the user's login shell,
+ * which the prompt in the captured output identifies. The Linux case is the
+ * one worth guarding: the old fallback was /bin/zsh, which most distributions
+ * do not ship, and a pane that cannot spawn fails here.
+ */
+if (TARGET === 'win32') {
+  check(
+    'the shell it picked is PowerShell',
+    typeof pty?.output === 'string' && /PS\s|PowerShell/i.test(pty.output),
+    pty?.output?.slice(0, 200)
+  )
+} else {
+  check(
+    'the shell it picked is a working login shell',
+    typeof pty?.output === 'string' && /\$|%|#/.test(pty.output),
+    pty?.output?.slice(0, 200)
+  )
+}
 
 // The Windows keymap, as the running app reports it rather than as tested here.
 const keys = await evaluate(`

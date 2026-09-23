@@ -5,6 +5,8 @@
   "main": "./out/main/index.js",
   "author": "Eaon",
   "license": "MIT",
+  "homepage": "https://github.com/sanscreates/Eaon-ADE",
+  "desktopName": "eaon-ade.desktop",
   "private": true,
   "scripts": {
     "dev": "electron-vite dev",
@@ -26,11 +28,13 @@
     "dist:mac": "npm run build && electron-builder --mac",
     "deps:win": "node scripts/fetch-win-deps.mjs",
     "dist:win": "npm run build && npm run deps:win && node scripts/dist-win.mjs",
+    "dist:linux": "npm run build && node scripts/dist-linux.mjs",
     "icon": "node scripts/make-icon.mjs 1024 resources/icon.png",
     "dist:mac:release": "npm run dist:mac && node scripts/notarize-mac.mjs",
     "verify:mac": "node scripts/verify-mac.mjs",
     "notarize:mac": "node scripts/notarize-mac.mjs",
-    "release:github": "node scripts/publish-release.mjs"
+    "release:github": "node scripts/publish-release.mjs",
+    "check:linux": "node scripts/check-linux.mjs"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",

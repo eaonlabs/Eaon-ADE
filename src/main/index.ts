@@ -31,6 +31,7 @@ import { getTheme } from '../shared/themes'
 import { STT_MODELS } from '../shared/stt'
 import { AGENTS, type PersistedState, type SpawnRequest } from '../shared/types'
 import type { SshHost } from '../shared/ssh'
+import { loginShell } from './login-shell'
 
 const run = promisify(execFile)
 
@@ -298,7 +299,7 @@ function createWindow(): BrowserWindow {
 /** Resolve a binary through a login shell so PATH matches the user's terminal. */
 async function which(bin: string): Promise<string | null> {
   if (!bin) return null
-  const shell = process.env.SHELL || '/bin/zsh'
+  const shell = loginShell()
   try {
     if (process.platform === 'win32') {
       const { stdout } = await run('where', [bin])

@@ -31,6 +31,22 @@ export class Updater {
 
   /** True when this build can actually receive updates. */
   private supported(): boolean {
+    /*
+     * On Linux only an AppImage can replace itself. A .deb or .rpm belongs to
+     * the system package manager, and an app that reached in and swapped its
+     * own files would be fighting dpkg for ownership of them — so those builds
+     * are updated by `apt upgrade`, the way everything else on the machine is.
+     *
+     * The AppImage runtime is what sets APPIMAGE; nothing else does. Without
+     * this, electron-updater quietly declines to act and the panel sits at
+     * "checking" forever rather than saying it is not its job.
+     */
+    if (process.platform === 'linux' && app.isPackaged && !process.env.APPIMAGE) {
+      this.state.unsupportedReason =
+        'This copy was installed by your package manager — update it with that.'
+      return false
+    }
+
     // A packaged build carries app-update.yml. In development the same file can
     // be supplied by hand as dev-app-update.yml, which is how this gets tested
     // without cutting a real release.

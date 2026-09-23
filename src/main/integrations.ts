@@ -7,6 +7,7 @@ import {
   type ProviderDef,
   type ProviderState
 } from '../shared/integrations'
+import { loginShell } from './login-shell'
 
 const run = promisify(execFile)
 
@@ -42,7 +43,7 @@ async function readLoginVars(names: string[]): Promise<Record<string, string>> {
   if (!names.length) return {}
   if (process.platform === 'win32') return {}
 
-  const shell = process.env.SHELL || '/bin/zsh'
+  const shell = loginShell()
   const sentinel = 'EAON_ENV_BEGIN'
   // The NUL *before* the sentinel is load-bearing: a profile that prints a
   // banner leaves that text in the same NUL-delimited field as the sentinel,

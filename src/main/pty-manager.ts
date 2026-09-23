@@ -6,6 +6,7 @@ import * as pty from 'node-pty'
 import type { SpawnRequest } from '../shared/types'
 import { remoteShellCommand, sshArgv } from './ssh'
 import { isProvisioned } from './brain/register'
+import { loginShell, loginShellArgs } from './login-shell'
 
 /**
  * Variables that describe whatever launched Eaon rather than the terminal we
@@ -135,7 +136,7 @@ export class PtyManager {
    * has, and cmd.exe only if both are somehow missing.
    */
   private defaultShell(): string {
-    if (process.platform !== 'win32') return process.env.SHELL || '/bin/zsh'
+    if (process.platform !== 'win32') return loginShell()
 
     const candidates = [
       path.join(process.env.ProgramFiles || 'C:\\Program Files', 'PowerShell', '7', 'pwsh.exe'),
@@ -164,7 +165,7 @@ export class PtyManager {
       // and in a twelve-up grid that is most of what you can see.
       return /(pwsh|powershell)\.exe$/i.test(shell) ? ['-NoLogo'] : []
     }
-    return /(bash|zsh|fish)$/.test(shell) ? ['-l'] : []
+    return loginShellArgs(shell)
   }
 
   /** The environment a freshly opened terminal window would actually have. */

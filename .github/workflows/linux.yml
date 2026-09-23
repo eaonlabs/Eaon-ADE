@@ -1,0 +1,170 @@
+name: Linux build
+
+# Linux artifacts built on Linux, then launched and driven there.
+#
+# Unlike Windows, there is no cross-build to fall back on. node-pty publishes
+# prebuilds for darwin and win32 and none at all for Linux, so its binary is
+# compiled at install time against this Electron version — which can only
+# happen on a machine of the target architecture. That is why each arch has its
+# own runner here rather than one runner passing `--arm64`: a package built the
+# other way installs, opens a window, and then cannot start a single pane.
+#
+# arm64 is the one that matters for a Raspberry Pi 4 or 5 on 64-bit Pi OS.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Attach the artifacts to the release for this tag
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+          - arch: arm64
+            # GitHub's arm64 Linux runner. Native, so node-pty compiles for the
+            # architecture the package is for.
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # rpmbuild for the rpm target; the rest is what Electron itself needs to
+      # open a window under Xvfb during the smoke test. A runner has none of
+      # this by default and the failure is a bare "error while loading shared
+      # libraries" long after the build that mattered.
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            rpm xvfb libgtk-3-0 libnss3 libasound2t64 libatk1.0-0 libatk-bridge2.0-0 \
+            libcups2 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libpango-1.0-0 libcairo2 libatspi2.0-0 libsecret-1-0 \
+          || sudo apt-get install -y --no-install-recommends rpm xvfb libasound2
+
+      # postinstall runs `electron-builder install-app-deps`, which is what
+      # rebuilds node-pty against Electron's ABI rather than Node's.
+      - name: Install
+        run: npm ci
+
+      - name: Confirm node-pty compiled for this machine
+        run: |
+          set -e
+          binary=$(find node_modules/node-pty/build -name 'pty.node' | head -1)
+          if [ -z "$binary" ]; then
+            echo "node-pty has no compiled binary; every terminal pane would fail to open."
+            exit 1
+          fi
+          echo "built: $binary"
+          file "$binary"
+
+      - name: Typecheck and bundle
+        run: npm run build
+
+      - name: Check the Linux-specific paths
+        run: npm run check:linux
+
+      # Through the script, so target selection stays in one place — it is what
+      # knows AppImage is x86-64 only.
+      - name: Package
+        run: node scripts/dist-linux.mjs
+
+      - name: What was built
+        run: ls -lh dist/*.AppImage dist/*.deb dist/*.rpm dist/*.tar.gz 2>/dev/null || ls -lh dist
+
+      # The unpacked build is the same tree every artifact wraps, so driving it
+      # tests all of them at once — and it is the only form that does not need
+      # installing as root on the runner.
+      - name: Launch it and check it works
+        env:
+          SMOKE_PORT: '9222'
+          SMOKE_PLATFORM: linux
+        run: |
+          set -e
+          exe=$(ls -d dist/linux-*unpacked/eaon-ade dist/linux-unpacked/eaon-ade 2>/dev/null | head -1)
+          test -x "$exe" || { echo "no executable found"; ls -R dist | head -40; exit 1; }
+          xvfb-run --auto-servernum --server-args='-screen 0 1280x900x24' \
+            node scripts/smoke-app.mjs "$exe"
+
+      # An AppImage that cannot start is the classic Linux packaging failure,
+      # and it fails before the app is reached, so the smoke test above would
+      # never see it. Only x86-64 builds one — see dist-linux.mjs.
+      - name: Check the AppImage itself starts
+        if: matrix.arch == 'x64'
+        run: |
+          set -e
+          image=$(ls dist/*.AppImage | head -1)
+          chmod +x "$image"
+          # Proves the runtime's own shared libraries resolve on a stock system,
+          # which is exactly what the arm64 runtime fails to do.
+          "$image" --appimage-version
+          "$image" --appimage-extract >/dev/null
+          test -x squashfs-root/eaon-ade
+          echo "the AppImage runtime loads and carries a runnable binary"
+
+      # The .deb is the one most people install, so it is installed here the way
+      # they would and the app is started from where it landed.
+      - name: Install the .deb and run the installed copy
+        env:
+          SMOKE_PORT: '9223'
+          SMOKE_PLATFORM: linux
+        run: |
+          set -e
+          deb=$(ls dist/*.deb | head -1)
+          sudo apt-get install -y "./$deb"
+          test -x /usr/bin/eaon-ade || { echo "no launcher on PATH"; exit 1; }
+          ls -l '/opt/Eaon ADE/chrome-sandbox'
+          test -f /usr/share/applications/eaon-ade.desktop
+          xvfb-run --auto-servernum --server-args='-screen 0 1280x900x24' \
+            node scripts/smoke-app.mjs '/opt/Eaon ADE/eaon-ade'
+
+      - name: Attach them to the release
+        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          version=$(node -p "require('./package.json').version")
+          tag="v$version"
+          echo "attaching to $tag"
+          # Nothing here has a space in its name — artifactName uses ${name},
+          # not ${productName} — so unlike the Windows step these go up as they
+          # are and match what latest-linux.yml names.
+          # AppImage is absent on arm64 by design, so this globs what exists.
+          files=$(ls dist/*.AppImage dist/*.deb dist/*.rpm dist/*.tar.gz dist/latest-linux*.yml 2>/dev/null || true)
+          if [ -z "$files" ]; then echo "nothing to attach"; exit 1; fi
+          echo "$files" | sed 's/^/  /'
+          gh release upload "$tag" $files --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Keep the artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eaon-ade-linux-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
+            dist/latest-linux*.yml

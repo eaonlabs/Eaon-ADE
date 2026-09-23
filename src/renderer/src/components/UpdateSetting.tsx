@@ -29,8 +29,9 @@ export function UpdateSetting(): React.JSX.Element {
       case 'error':
         return <>Could not check — {update.error}</>
       case 'unsupported':
-        // Running from source, or a build with no release feed behind it.
-        return <>Not available in this build</>
+        // Running from source, a build with no release feed behind it, or a
+        // Linux package whose updates belong to apt/dnf rather than to us.
+        return <>{update.unsupportedReason ?? 'Not available in this build'}</>
       default:
         return (
           <>
