@@ -384,12 +384,12 @@ Pick `arm64` on a Raspberry Pi, `x64`/`x86_64` on a normal PC.
 
 ```bash
 # Debian, Ubuntu, Raspberry Pi OS
-sudo apt install ./eaon-ade_1.1.1_arm64.deb
+sudo apt install ./eaon-ade_1.1.2_arm64.deb
 eaon-ade            # or find it in the applications menu
 
 # AppImage, x86-64
-chmod +x eaon-ade-1.1.1-x86_64.AppImage
-./eaon-ade-1.1.1-x86_64.AppImage
+chmod +x eaon-ade-1.1.2-x86_64.AppImage
+./eaon-ade-1.1.2-x86_64.AppImage
 ```
 
 The app installs to `/opt/eaon-ade` and puts `eaon-ade` on your `PATH`.
