@@ -144,10 +144,10 @@ jobs:
           deb=$(ls dist/*.deb | head -1)
           sudo apt-get install -y "./$deb"
           test -x /usr/bin/eaon-ade || { echo "no launcher on PATH"; exit 1; }
-          ls -l '/opt/Eaon ADE/chrome-sandbox'
+          ls -l /opt/eaon-ade/chrome-sandbox
           test -f /usr/share/applications/eaon-ade.desktop
           xvfb-run --auto-servernum --server-args='-screen 0 1280x900x24' \
-            node scripts/smoke-app.mjs '/opt/Eaon ADE/eaon-ade'
+            node scripts/smoke-app.mjs /opt/eaon-ade/eaon-ade
 
       - name: Attach them to the release
         if: github.event_name == 'workflow_dispatch' && inputs.publish
