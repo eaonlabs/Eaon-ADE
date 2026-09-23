@@ -103,6 +103,17 @@ jobs:
           set -e
           exe=$(ls -d dist/linux-*unpacked/eaon-ade dist/linux-unpacked/eaon-ade 2>/dev/null | head -1)
           test -x "$exe" || { echo "no executable found"; ls -R dist | head -40; exit 1; }
+          # Nothing has installed this tree, so its sandbox helper is still an
+          # ordinary file — and these runners restrict unprivileged user
+          # namespaces, so Chromium wants the setuid helper and refuses to start
+          # without it:
+          #   The SUID sandbox helper binary was found, but is not configured
+          #   correctly. Rather than run without sandboxing I'm aborting now.
+          # The .deb's postinst does this for an installed copy. Doing it here by
+          # hand is the same thing, and the same thing somebody unpacking the
+          # tar.gz on such a machine has to do.
+          sudo chown root:root "$(dirname "$exe")/chrome-sandbox"
+          sudo chmod 4755 "$(dirname "$exe")/chrome-sandbox"
           xvfb-run --auto-servernum --server-args='-screen 0 1280x900x24' \
             node scripts/smoke-app.mjs "$exe"
 

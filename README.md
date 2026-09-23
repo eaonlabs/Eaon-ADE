@@ -394,6 +394,17 @@ chmod +x eaon-ade-1.1.2-x86_64.AppImage
 
 The app installs to `/opt/eaon-ade` and puts `eaon-ade` on your `PATH`.
 
+If you use the **tar.gz** rather than a package, and your distribution has
+unprivileged user namespaces switched off (Ubuntu 24.04 and hardened Debian do),
+Chromium will want its setuid sandbox helper and refuse to start without it. The
+`.deb` and `.rpm` set that up when they install; unpacking a tarball does not, so
+do it once by hand:
+
+```bash
+sudo chown root:root eaon-ade-*/chrome-sandbox
+sudo chmod 4755 eaon-ade-*/chrome-sandbox
+```
+
 **There is no arm64 AppImage, deliberately.** The AppImage runtime
 electron-builder bundles for arm64 links against the unversioned `libz.so`,
 which ships in `zlib1g-dev` and on no ordinary desktop, so the image exits with
