@@ -1,5 +1,5 @@
 import { Brain, ChevronDown, ClipboardList, Compass, Globe, SquareTerminal, Flame, GitBranch, LayoutList, Loader, NotebookPen, Plus, Terminal, X } from 'lucide-react'
-import { PANEL_KINDS, isPanelKind, projectOf, type WorkspaceKind } from '@shared/types'
+import { PANEL_KINDS, isPanelKind, projectOf, type Workspace, type WorkspaceKind } from '@shared/types'
 import type { SshHost } from '@shared/ssh'
 import { useCallback, useEffect, useState } from 'react'
 import { MOD, basename } from '../lib/util'
@@ -146,6 +146,7 @@ export function WorkspaceTabs(): React.JSX.Element | null {
   const activeId = useStore((s) => s.activeWorkspaceId)
   const setActive = useStore((s) => s.setActiveWorkspace)
   const close = useStore((s) => s.closeWorkspace)
+  const confirmClose = useStore((s) => s.settings.confirmClose)
   const openTab = useStore((s) => s.openTab)
   const notify = useStore((s) => s.notify)
   const notices = useStore((s) => s.notices)
@@ -174,6 +175,24 @@ export function WorkspaceTabs(): React.JSX.Element | null {
   const here = !stagePage && active && isPanelKind(active.kind) ? active.kind : null
 
   if (!showTabs || !project) return null
+
+  /*
+   * Closing a tab ends the agents in it, so it asks first — the same question
+   * the rail asks, under the same setting, because it is the same loss. The
+   * close button sits a few pixels from the tab you click to switch to, which
+   * is exactly where an accident happens.
+   */
+  const onClose = (w: Workspace): void => {
+    if (confirmClose && w.panes.length > 0) {
+      const n = w.panes.length
+      const ok = window.confirm(
+        `Close ${w.name}? ${n} session${n === 1 ? '' : 's'} will end.\n\n` +
+          'You can bring it back with ⇧⌘T, or by opening a tab in this project.'
+      )
+      if (!ok) return
+    }
+    close(w.id)
+  }
 
   const addTab = async (): Promise<void> => {
     if (!active) return
@@ -218,7 +237,7 @@ export function WorkspaceTabs(): React.JSX.Element | null {
               </button>
               <button
                 className="ws-tab-close"
-                onClick={() => close(w.id)}
+                onClick={() => onClose(w)}
                 aria-label={`Close ${w.name}`}
                 title={`Close ${w.name}`}
               >

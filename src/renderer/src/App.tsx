@@ -10,6 +10,15 @@ import { TerminalGrid } from './components/TerminalGrid'
 import { BrowserPanel } from './components/BrowserPanel'
 import { SideDock } from './components/SideDock'
 import { StagePageView } from './components/StagePageView'
+import { ErrorBoundary } from './components/ErrorBoundary'
+
+/** What to call each page when one of them fails to render. */
+const PAGE_LABEL: Record<string, string> = {
+  search: 'Search',
+  automations: 'Automations',
+  pulls: 'Pull requests',
+  pages: 'Pages'
+}
 import { WorkspaceTabs } from './components/WorkspaceTabs'
 import { CommandPalette } from './components/CommandPalette'
 import { ResumeDialog } from './components/ResumeDialog'
@@ -338,6 +347,13 @@ export function App(): React.JSX.Element {
           return take(() => s.setSettingsOpen(!s.settingsOpen))
         case 'resume':
           return take(() => s.setResumeOpen(true))
+        case 'reopenTab':
+          return take(() => {
+            // Nothing to bring back is worth saying, or the chord looks broken.
+            if (!s.reopenClosed()) {
+              s.notify({ kind: 'info', title: 'Nothing to reopen', text: 'No tab has been closed yet.' })
+            }
+          })
         case 'dictate':
           // Handled by the dictation listener, which runs first and stops this
           // one; reaching here means it declined, so do nothing.
@@ -409,7 +425,16 @@ export function App(): React.JSX.Element {
     if (wizard) return <SetupWizard />
     // A rail destination outranks the workspace: you asked to look at
     // something, and the workspace is still there when you come back.
-    if (stagePage) return <StagePageView page={stagePage} cwd={workspace?.cwd ?? home} />
+    if (stagePage)
+      return (
+        /*
+         * Keyed by the page, so navigating elsewhere remounts the boundary and
+         * clears a failure rather than carrying it to the next page.
+         */
+        <ErrorBoundary key={stagePage} scope={PAGE_LABEL[stagePage] ?? 'This page'}>
+          <StagePageView page={stagePage} cwd={workspace?.cwd ?? home} />
+        </ErrorBoundary>
+      )
     if (!workspace) return <Launcher />
     // What the stage shows is a property of the workspace you are in, not a
     // separate mode laid over it. That is what lets the Board be somewhere you

@@ -339,6 +339,18 @@ export interface VaultNote {
   updatedAt: number
 }
 
+/**
+ * A workspace that was closed, kept so it can be brought back.
+ *
+ * The whole workspace, not a summary: its panes carry the `command` and
+ * `sessionId` each agent was launched with, and those are what let a reopened
+ * tab resume the conversations rather than open empty terminals beside them.
+ */
+export interface ClosedWorkspace {
+  workspace: Workspace
+  closedAt: number
+}
+
 export interface PersistedState {
   version: number
   workspaces: Workspace[]
@@ -358,6 +370,13 @@ export interface PersistedState {
   trials?: Trial[]
   /** Saved prompts with triggers. Absent on anything saved before them. */
   automations?: Automation[]
+  /**
+   * Recently closed workspaces, newest first, for reopening one.
+   *
+   * Optional: a state file written before this existed has none, and that
+   * reads correctly as "nothing to bring back".
+   */
+  closedTabs?: ClosedWorkspace[]
 }
 
 export interface ResumableSession {

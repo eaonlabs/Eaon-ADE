@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import {
+  type ClosedWorkspace,
   type AgentDef,
   agentKeepsSessions,
   AGENTS,
@@ -105,6 +106,10 @@ interface AppState {
   board: BoardCard[]
   vault: VaultNote[]
   dismissedResume: string[]
+  /** Workspaces you closed, newest first, so one can be brought back. */
+  closedTabs: ClosedWorkspace[]
+  /** Brings back the most recently closed workspace, agents and all. */
+  reopenClosed: () => boolean
   /** Isolated runs, keyed to the workspace that holds their panes. */
   trials: Trial[]
   /** Saved prompts with triggers. */
@@ -369,6 +374,7 @@ export const useStore = create<AppState>((set, get) => ({
   board: [],
   vault: [],
   dismissedResume: [],
+  closedTabs: [],
   trials: [],
   automations: [],
 
@@ -472,6 +478,7 @@ export const useStore = create<AppState>((set, get) => ({
       board: saved.board ?? [],
       vault: saved.vault ?? [],
       dismissedResume: saved.dismissedResume ?? [],
+      closedTabs: saved.closedTabs ?? [],
       trials: saved.trials ?? [],
       automations: saved.automations ?? []
     })
@@ -530,6 +537,7 @@ export const useStore = create<AppState>((set, get) => ({
         board: s.board,
         vault: s.vault,
         dismissedResume: s.dismissedResume,
+        closedTabs: s.closedTabs,
         trials: s.trials,
         automations: s.automations
       }
@@ -789,6 +797,28 @@ export const useStore = create<AppState>((set, get) => ({
     // only way to have both would be a detached HEAD per tab, which makes
     // committing from a tab a two-step dance for no gain.
     const project = projectOf(from)
+
+    /*
+     * A tab closed by mistake comes back instead of a blank one appearing.
+     *
+     * Closing a tab and immediately opening one is what somebody does the
+     * moment they realise — so that is treated as the undo it plainly is, and
+     * the agents come back with their conversations rather than as empty
+     * terminals next to the work that was lost. Only for this project, and
+     * only the one closed most recently; anything older needs asking for.
+     */
+    const restorable = s.closedTabs.find((c) => projectOf(c.workspace) === project)
+    if (restorable) {
+      set({
+        workspaces: [...s.workspaces, restorable.workspace],
+        closedTabs: s.closedTabs.filter((c) => c !== restorable),
+        activeWorkspaceId: restorable.workspace.id,
+        stagePage: null
+      })
+      get().persist()
+      return { ok: true }
+    }
+
     const siblings = s.workspaces.filter(
       (w) => w.kind === 'terminals' && projectOf(w) === project
     )
@@ -930,12 +960,49 @@ export const useStore = create<AppState>((set, get) => ({
       forgetPane(p.id)
     })
     const rest = s.workspaces.filter((w) => w.id !== id)
+    /*
+     * Remembered on the way out, so closing one by accident is recoverable.
+     *
+     * The whole workspace is kept rather than a summary of it: each pane still
+     * carries the command and session id its agent was launched with, and the
+     * main process resumes a conversation from exactly those. Ten is enough to
+     * undo a mistake and few enough that it cannot grow into the state file.
+     */
+    const closedTabs = target
+      ? [{ workspace: target, closedAt: Date.now() }, ...s.closedTabs].slice(0, 10)
+      : s.closedTabs
     set({
       workspaces: rest,
+      closedTabs,
       activeWorkspaceId: s.activeWorkspaceId === id ? (rest[rest.length - 1]?.id ?? null) : s.activeWorkspaceId,
       notices: s.notices.filter((n) => n.workspaceId !== id)
     })
     get().persist()
+  },
+
+  /**
+   * Brings back the workspace you closed last.
+   *
+   * Its panes go back with the command and session id they had, so the agents
+   * pick their conversations up rather than starting empty beside them — the
+   * ids were removed from the store when it closed, so putting them back
+   * cannot collide with anything.
+   *
+   * Returns whether there was anything to bring back, so a keystroke that
+   * found nothing can say so instead of appearing to do nothing.
+   */
+  reopenClosed() {
+    const s = get()
+    const [last, ...rest] = s.closedTabs
+    if (!last) return false
+    set({
+      workspaces: [...s.workspaces, last.workspace],
+      closedTabs: rest,
+      activeWorkspaceId: last.workspace.id,
+      stagePage: null
+    })
+    get().persist()
+    return true
   },
 
   /**

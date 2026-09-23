@@ -2,6 +2,20 @@ import { Component, type ErrorInfo, type ReactNode } from 'react'
 
 interface Props {
   children: ReactNode
+  /**
+   * Names the part of the interface being guarded, which turns this from a
+   * whole-window failure into a local one.
+   *
+   * Without it a single throw anywhere replaces the entire app — the rail, the
+   * tabs and every terminal along with the one component that went wrong. A
+   * page is worth isolating precisely because it is the newest code and the
+   * least load-bearing: losing one is a message in a panel, losing the window
+   * is losing sight of every agent you had running.
+   *
+   * Reset by remounting: give the boundary a `key` that changes when you
+   * navigate, or the error would follow you to the next page.
+   */
+  scope?: string
 }
 
 interface State {
@@ -45,6 +59,21 @@ export class ErrorBoundary extends Component<Props, State> {
   render(): ReactNode {
     const { error } = this.state
     if (!error) return this.props.children
+
+    // A named scope failed, not the window. Everything around it is still
+    // running, so say what broke and leave the rest alone.
+    if (this.props.scope) {
+      return (
+        <div role="alert" className="scope-error">
+          <strong>{this.props.scope} could not be shown.</strong>
+          <p>
+            The rest of the app is unaffected — your terminals are still running. Try another
+            page, or reopen this one.
+          </p>
+          <pre>{this.details()}</pre>
+        </div>
+      )
+    }
 
     return (
       <div

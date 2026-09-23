@@ -660,3 +660,47 @@
   color: var(--text-mid);
   resize: none;
 }
+
+/*
+ * A page that failed to render, shown in place of that page alone.
+ *
+ * Deliberately quiet and inline: everything around it still works, and the
+ * loud full-window version of this belongs to a failure that really did take
+ * the whole interface with it.
+ */
+.scope-error {
+  margin: 24px;
+  padding: 20px 22px;
+  max-width: 720px;
+  border: 1px solid var(--line-200);
+  border-radius: 10px;
+  background: var(--ink-050);
+  color: var(--text-mid);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.scope-error strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-hi);
+  font-size: 14px;
+}
+
+.scope-error p {
+  margin: 0 0 12px;
+}
+
+.scope-error pre {
+  margin: 0;
+  padding: 12px;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--ink-000);
+  color: var(--text-lo);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

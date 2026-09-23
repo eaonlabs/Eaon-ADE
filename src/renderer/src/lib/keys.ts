@@ -43,6 +43,7 @@ export type Command =
   | 'dock'
   | 'settings'
   | 'resume'
+  | 'reopenTab'
   | 'dictate'
   | 'selectAll'
   | 'find'
@@ -105,7 +106,10 @@ function fontCommand(e: KeyLike): Command | null {
  */
 const WINDOWS_ALIASES: Record<string, Command> = {
   o: 'dock', // ⌘⇧B
-  m: 'dictate' // ⌘⇧D
+  m: 'dictate', // ⌘⇧D
+  // ⌘⇧T. It cannot be Ctrl+Shift+T here: with one modifier combo that chord is
+  // already ⌘T, which is New Workspace.
+  r: 'reopenTab'
 }
 
 const SHARED: Record<string, Command> = {
@@ -144,6 +148,8 @@ export function commandFor(e: KeyLike): Command | null {
     if (e.shiftKey) {
       if (key === 'b') return 'dock'
       if (key === 'd') return 'dictate'
+      // The chord every browser uses for this, which is the point of it.
+      if (key === 't') return 'reopenTab'
       return null
     }
     if (/^[1-9]$/.test(key)) return `pane${Number(key)}`
