@@ -56,7 +56,9 @@ export interface LogEntry {
  */
 const api = {
   pty: {
-    spawn: (req: SpawnRequest): Promise<{ ok: boolean; error?: string }> =>
+    spawn: (
+      req: SpawnRequest
+    ): Promise<{ ok: boolean; error?: string; reattached?: boolean }> =>
       ipcRenderer.invoke('pty:spawn', req),
     write: (paneId: string, data: string): void => ipcRenderer.send('pty:write', paneId, data),
     resize: (paneId: string, cols: number, rows: number): void =>

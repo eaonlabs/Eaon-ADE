@@ -554,6 +554,17 @@ export function SettingsModal(): React.JSX.Element | null {
                     />
                   </Row>
 
+                  <Row
+                    name="Agent row in the rail"
+                    desc="The row of agent marks under each project. Off, a project is one row."
+                  >
+                    <Toggle
+                      on={settings.showAgentRoster}
+                      onChange={(v) => update({ showAgentRoster: v })}
+                      label="Agent row in the rail"
+                    />
+                  </Row>
+
                   <Row name="Reduce motion" desc="Turns off pulsing dots and panel animations.">
                     <Toggle
                       on={settings.reduceMotion}

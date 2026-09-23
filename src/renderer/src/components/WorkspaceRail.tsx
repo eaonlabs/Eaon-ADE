@@ -120,6 +120,7 @@ function NameInput({
 
 export function WorkspaceRail(): React.JSX.Element {
   const workspaces = useStore((s) => s.workspaces)
+  const showRoster = useStore((s) => s.settings.showAgentRoster)
   const folders = useStore((s) => s.folders)
   const activeId = useStore((s) => s.activeWorkspaceId)
   const notices = useStore((s) => s.notices)
@@ -160,7 +161,37 @@ export function WorkspaceRail(): React.JSX.Element {
 
   // The list is projects and nothing else. A panel is a destination in the nav
   // above, and a browser is a *tab* of a project, in the strip above the stage.
-  const shells = workspaces.filter((w) => w.kind === 'terminals')
+  /*
+   * One row per project, not one per workspace.
+   *
+   * Opening a tab makes another `terminals` workspace in the same project —
+   * that is what a tab *is* — so listing every one of them put each tab in the
+   * rail as though it were a separate project. Six tabs on one repository read
+   * as six repositories, which is the opposite of what the strip above the
+   * stage is for.
+   *
+   * The representative is whichever of a project's workspaces you are in, so
+   * the lit row follows you between its tabs; otherwise the oldest, which is
+   * the one that was there before any tab existed.
+   */
+  const everyShell = workspaces.filter((w) => w.kind === 'terminals')
+  const byProject = new Map<string, Workspace[]>()
+  for (const w of everyShell) {
+    const key = projectOf(w)
+    const group = byProject.get(key)
+    if (group) group.push(w)
+    else byProject.set(key, [w])
+  }
+  const shells = [...byProject.values()].map((group) => {
+    const here = group.find((w) => w.id === activeId)
+    return here ?? [...group].sort((a, b) => a.createdAt - b.createdAt)[0]
+  })
+  /** Every workspace sharing a row's project — its tabs included. */
+  const tabsOf = (w: Workspace): Workspace[] => byProject.get(projectOf(w)) ?? [w]
+  /** Sessions across a project rather than in one of its tabs. */
+  const paneCount = (w: Workspace): number =>
+    tabsOf(w).reduce((n, t) => n + t.panes.length, 0)
+
   const loose = shells.filter((w) => !w.folderId)
 
   const active = workspaces.find((w) => w.id === activeId) ?? null
@@ -244,7 +275,7 @@ export function WorkspaceRail(): React.JSX.Element {
       <React.Fragment key={w.id}>
         <button
           className={`ws-item hue-${w.hue}`}
-          data-active={w.id === activeId}
+          data-active={tabsOf(w).some((t) => t.id === activeId)}
           data-panel={panel}
           data-nested={!panel && Boolean(w.folderId)}
           // Only terminal workspaces are filed. The panels are one of each and
@@ -292,18 +323,20 @@ export function WorkspaceRail(): React.JSX.Element {
             however many agents were inside. Closing lives in the right-click menu
             now, where it takes a deliberate second click to reach.
           */}
-          {!renaming && !panel && <span className="ws-count">{w.panes.length}</span>}
+          {!renaming && !panel && <span className="ws-count">{paneCount(w)}</span>}
         </button>
         {/*
           A sibling of the row, never a child of it: the row is a button,
           and the roster has buttons of its own inside.
         */}
-        <AgentRoster
-          workspace={w}
-          open={rosters.has(w.id)}
-          onToggle={() => toggleRoster(w.id)}
-          nested={!panel && Boolean(w.folderId)}
-        />
+        {showRoster && (
+          <AgentRoster
+            workspace={w}
+            open={rosters.has(w.id)}
+            onToggle={() => toggleRoster(w.id)}
+            nested={!panel && Boolean(w.folderId)}
+          />
+        )}
       </React.Fragment>
     )
   }

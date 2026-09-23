@@ -830,6 +830,18 @@ class TerminalRegistry {
       rt.spawned = false
       rt.term.writeln(`\r\n  Could not start a shell here.\r\n  ${res.error ?? ''}\r\n`)
       this.events?.onStatus(paneId, 'exited')
+      return
+    }
+    /*
+     * The shell was already running and we were given it back, rather than a
+     * fresh one — the window went away and this one did not. Say so, because
+     * the terminal is blank (the scrollback died with the old renderer) while
+     * the agent underneath has been working the whole time, and a blank pane
+     * otherwise reads as a dead one.
+     */
+    if (res.reattached) {
+      rt.term.writeln('\r\n  [reattached — this session kept running]\r\n')
+      this.events?.onStatus(paneId, 'idle')
     }
   }
 

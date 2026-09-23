@@ -1,5 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, nativeTheme, screen } from 'electron'
 import { execFile } from 'node:child_process'
+import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -81,6 +82,32 @@ function brainFor(scope: BrainScope | null | undefined): BrainStore {
 // development instance run alongside the installed app silently ate the user's
 // open workspaces. Neither --user-data-dir nor a redirected HOME prevents it:
 // this path is set explicitly, and macOS resolves appData through the OS.
+/**
+ * Leaves a line on disk when the window dies.
+ *
+ * A renderer crash is invisible after the fact: the reload repaints everything
+ * and console output from a packaged app goes nowhere anybody will look. With
+ * no record, "it keeps crashing" cannot be turned into a cause. One file,
+ * appended to, capped so it cannot grow without bound.
+ */
+function recordCrash(message: string): void {
+  const line = `${new Date().toISOString()}  ${message}\n`
+  console.error(`[eaon] ${message}`)
+  try {
+    const dir = app.getPath('userData')
+    const file = path.join(dir, 'crashes.log')
+    try {
+      // Keep the file to the last stretch of history rather than for ever.
+      if (fs.statSync(file).size > 256 * 1024) fs.rmSync(file, { force: true })
+    } catch {
+      /* no file yet */
+    }
+    fs.appendFileSync(file, line)
+  } catch {
+    /* logging must never be the thing that breaks */
+  }
+}
+
 const APP_NAME = app.isPackaged ? 'Eaon ADE' : 'Eaon ADE (dev)'
 app.setName(APP_NAME)
 app.setPath('userData', path.join(app.getPath('appData'), APP_NAME))
@@ -251,7 +278,7 @@ function createWindow(): BrowserWindow {
    */
   let recoveries = 0
   win.webContents.on('render-process-gone', (_e, details) => {
-    console.error(`[eaon] renderer gone: ${details.reason} (exit ${details.exitCode})`)
+    recordCrash(`renderer gone: ${details.reason} (exit ${details.exitCode})`)
     if (details.reason === 'clean-exit' || win.isDestroyed()) return
 
     recoveries += 1
@@ -263,7 +290,20 @@ function createWindow(): BrowserWindow {
       return
     }
 
-    ptys.killAll()
+    /*
+     * The shells stay.
+     *
+     * This used to kill every one of them before reloading, which turned one
+     * renderer crash — something the person watching did nothing to cause —
+     * into every agent in every workspace dying at once, mid-task. The shells
+     * live in this process and are unaffected by the window going away; the
+     * only real problem was PTY output arriving at a destroyed webContents,
+     * and muting solves that without throwing the work away.
+     *
+     * On reload the renderer asks for a shell per pane by the same pane ids,
+     * and PtyManager.spawn hands back the running one instead of replacing it.
+     */
+    ptys.mute()
     setTimeout(() => {
       if (win.isDestroyed()) return
       ptys.unmute()

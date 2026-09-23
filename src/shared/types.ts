@@ -239,6 +239,13 @@ export interface Settings {
   /** A tab per workspace across the top of the stage, beside the rail. */
   showWorkspaceTabs: boolean
   /**
+   * The row of agent marks under each project in the rail.
+   *
+   * It is a second, denser copy of what the grid already shows, and on a rail
+   * with a dozen projects it is most of the rail. Off, a project is one row.
+   */
+  showAgentRoster: boolean
+  /**
    * Ids of themes marked `secret` that this install has turned up.
    *
    * A list rather than a flag so finding one never reveals the rest, and so a
@@ -564,6 +571,7 @@ export const DEFAULT_SETTINGS: Settings = {
   reduceMotion: false,
   bellAttention: true,
   showWorkspaceTabs: true,
+  showAgentRoster: true,
   foundThemes: [],
 
   voiceModelId: '',

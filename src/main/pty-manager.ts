@@ -60,6 +60,10 @@ interface Session {
   pid: number
   /** Whether this shell is `ssh`, not a local process — see spawn(). */
   remote: boolean
+  /** What this shell was started for, so a re-spawn can tell "the same pane
+   *  coming back" from "a different thing in the same slot". */
+  cwd: string
+  hostKey: string
 }
 
 type Sender = (channel: string, payload: unknown) => void
@@ -107,6 +111,17 @@ export class PtyManager {
    */
   unmute(): void {
     this.muted = false
+  }
+
+  /**
+   * Stops sending to the window without touching the shells.
+   *
+   * The renderer can go away while every agent under it is fine. Muting is how
+   * a PTY read avoids landing on a destroyed webContents; killing the shells
+   * was the old way, and it threw the work away to solve a delivery problem.
+   */
+  mute(): void {
+    this.muted = true
   }
 
   private emit(channel: string, payload: unknown): void {
@@ -270,11 +285,37 @@ export class PtyManager {
     this.extraEnv = fn
   }
 
-  spawn(req: SpawnRequest): { ok: boolean; error?: string } {
-    this.kill(req.paneId)
-
+  spawn(req: SpawnRequest): { ok: boolean; error?: string; reattached?: boolean } {
     const remoteHost = req.host ?? null
     const cwd = req.cwd && req.cwd.length ? req.cwd : os.homedir()
+    const hostKey = remoteHost ? `${remoteHost.user ?? ''}@${remoteHost.hostname}` : ''
+
+    /*
+     * A pane asking for a shell it already has gets the one it has.
+     *
+     * Shells live here, not in the renderer, so they outlive it — and the
+     * renderer goes away more often than anyone would like: a crash, the
+     * recovery reload that follows, a hot reload in development. Every one of
+     * those used to end with this method killing a perfectly healthy agent
+     * mid-task, because the first thing it did was kill whatever was in the
+     * slot. That is the "sessions keep exiting on their own" nobody pressed a
+     * button for.
+     *
+     * Only when the request matches. A pane pointed somewhere new, or at a
+     * different machine, genuinely wants a different shell, and restart() and
+     * stop() kill theirs first so they never reach this.
+     */
+    const existing = this.sessions.get(req.paneId)
+    if (existing?.alive && existing.cwd === cwd && existing.hostKey === hostKey) {
+      try {
+        existing.proc.resize(Math.max(20, req.cols || 80), Math.max(5, req.rows || 24))
+      } catch {
+        /* the shell died between the check and the resize; fall through next time */
+      }
+      return { ok: true, reattached: true }
+    }
+
+    this.kill(req.paneId)
 
     /*
      * A remote pane's local child process is `ssh` itself, not a shell — the
@@ -311,7 +352,9 @@ export class PtyManager {
         sawOutput: false,
         token: this.nextToken++,
         pid: proc.pid,
-        remote: Boolean(remoteHost)
+        remote: Boolean(remoteHost),
+        cwd,
+        hostKey
       }
       this.sessions.set(req.paneId, session)
 
