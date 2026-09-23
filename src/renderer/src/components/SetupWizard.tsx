@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Check, Folder, FolderOpen, Pencil, Plus, Server, Terminal } from 'lucide-react'
+import { Check, Folder, FolderOpen, Pencil, Plus, Server } from 'lucide-react'
 import { LAYOUTS, gridShape, type AgentDef, type Preset } from '@shared/types'
 import { useStore } from '../store/useStore'
 import { basename, shortPath, uid } from '../lib/util'
+import { AgentMark } from './AgentMarks'
 import { HostPicker } from './HostPicker'
 import { hostLabel } from '@shared/ssh'
 
@@ -377,7 +378,16 @@ export function SetupWizard(): React.JSX.Element | null {
                     onClick={() => update({ agentId: a.id })}
                   >
                     <span className="agent-mark">
-                      <Terminal size={15} />
+                      {/*
+                        The CLI's own mark, not a terminal glyph for all of
+                        them. Every row looked identical, so the list could
+                        only be read by name — and the pane header these rows
+                        lead to has always shown the real one, which made the
+                        picker the odd one out. `AgentMark` falls back to a
+                        terminal for `shell`, which is the one row where a
+                        terminal is the honest answer.
+                      */}
+                      <AgentMark agentId={a.id} size={16} />
                     </span>
                     <span className="agent-meta">
                       <span className="agent-name">{a.label}</span>

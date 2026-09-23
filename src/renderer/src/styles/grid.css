@@ -615,3 +615,29 @@
   opacity: 1;
   box-shadow: 0 0 0 2px var(--accent-wash);
 }
+
+/* ---- the agent in a pane header ------------------------------------------
+ * The mark sits between the pane's number and its handle, so a row of panes
+ * reads "which agent, then which one of them" left to right. The mark keeps
+ * its own brand colour and is never recoloured by theme or status — the dot
+ * to its left already carries status, and a logo tinted by state stops being
+ * a logo.
+ */
+
+.pane-agent {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+}
+
+/* Shown only when the agent has not set a title of its own — a real title is
+   always more specific than the agent's name, so it wins the slot. */
+.pane-agent-name {
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

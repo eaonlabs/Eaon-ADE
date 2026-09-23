@@ -135,8 +135,8 @@ export function HostsPanel(): React.JSX.Element {
         </span>
       </div>
       <p className="settings-lede">
-        Read from your own file every time, never copied here. A workspace on one of these connects
-        by alias, so ProxyJump, extra keys and anything else you have configured keep working.
+        A workspace on one of these connects by alias, so ProxyJump, extra keys and anything else
+        you have configured keep working.
       </p>
 
       {configHosts !== null && configHosts.length === 0 ? (

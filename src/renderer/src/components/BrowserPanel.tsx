@@ -115,13 +115,26 @@ const SAFETY: Record<Safety, { icon: typeof Lock; label: string; tone: string }>
   none: { icon: Globe, label: '', tone: 'plain' }
 }
 
-export function BrowserPanel(): React.JSX.Element {
+/**
+ * The browser, as a tab of a project.
+ *
+ * `visible` is a prop rather than something read off the dock. It used to be
+ * `dockOpen && dockTab === 'browser'`, which tied this component to being the
+ * dock's — and it gates real work: port scanning and the keyboard chords both
+ * stop when the browser is not on screen. Now that a browser is a tab, the
+ * thing that knows whether it is showing is whatever rendered it.
+ *
+ * It is rendered mounted-but-hidden when another tab is in front, never
+ * unmounted: a `<webview>` reloads its page from scratch when it re-attaches,
+ * which would cost you the scroll position, the form you were filling in, and
+ * whatever route a single-page app was on — every time you glanced at a
+ * terminal and came back.
+ */
+export function BrowserPanel({ visible }: { visible: boolean }): React.JSX.Element {
   const home = useStore((s) => s.settings.browserHome)
   const engineId = useStore((s) => s.settings.browserSearchEngine)
   const savedZoom = useStore((s) => s.settings.browserZoom)
   const update = useStore((s) => s.updateSettings)
-  const dockOpen = useStore((s) => s.dockOpen)
-  const dockTab = useStore((s) => s.dockTab)
 
   const rootRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<WebviewEl | null>(null)
@@ -165,7 +178,6 @@ export function BrowserPanel(): React.JSX.Element {
    */
   const editing = useRef(false)
 
-  const visible = dockOpen && dockTab === 'browser'
   const engine = useMemo(() => engineById(engineId), [engineId])
   const safety = SAFETY[safetyOf(current)]
 

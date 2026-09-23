@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import type { LinearTeam, TaskFetch, TaskProvider, WorkItem } from '@shared/tasks'
 import { useStore } from '../store/useStore'
+import { PrReviewPanel } from './PrReviewPanel'
 
 /**
  * Work waiting for you, in the side dock.
@@ -31,12 +32,14 @@ function Row({
   item,
   busy,
   onOpen,
-  onApprove
+  onApprove,
+  onReview
 }: {
   item: WorkItem
   busy: boolean
   onOpen: () => void
   onApprove: () => void
+  onReview: () => void
 }): React.JSX.Element {
   const openUrl = (): void => window.eaon.sys.openExternal(item.url)
   return (
@@ -80,6 +83,16 @@ function Row({
       </span>
 
       <span className="wk-actions">
+        {item.kind === 'pr' && item.provider === 'github' && (
+          <button
+            className="wk-btn"
+            onClick={onReview}
+            disabled={busy}
+            title="See what changed, file by file"
+          >
+            Review
+          </button>
+        )}
         {item.kind === 'pr' && item.provider === 'github' && item.tone !== 'merged' && (
           <button className="wk-btn" onClick={onApprove} disabled={busy} title="Approve this pull request">
             Approve
@@ -189,6 +202,7 @@ export function TasksPanel({ cwd }: { cwd: string }): React.JSX.Element {
   const [filter, setFilter] = useState<'all' | TaskProvider>('all')
   const [busyId, setBusyId] = useState<string | null>(null)
   const [composing, setComposing] = useState(false)
+  const [reviewing, setReviewing] = useState<WorkItem | null>(null)
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true)
@@ -202,6 +216,10 @@ export function TasksPanel({ cwd }: { cwd: string }): React.JSX.Element {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    setReviewing(null)
+  }, [cwd])
 
   const items = (fetched?.items ?? []).filter((i) => filter === 'all' || i.provider === filter)
 
@@ -234,6 +252,17 @@ export function TasksPanel({ cwd }: { cwd: string }): React.JSX.Element {
     } finally {
       setBusyId(null)
     }
+  }
+
+  if (reviewing) {
+    return (
+      <PrReviewPanel
+        item={reviewing}
+        cwd={cwd}
+        onClose={() => setReviewing(null)}
+        onReviewed={() => void load()}
+      />
+    )
   }
 
   return (
@@ -282,6 +311,7 @@ export function TasksPanel({ cwd }: { cwd: string }): React.JSX.Element {
               busy={busyId === item.id}
               onOpen={() => void open(item)}
               onApprove={() => void approve(item)}
+              onReview={() => setReviewing(item)}
             />
           ))
         )}

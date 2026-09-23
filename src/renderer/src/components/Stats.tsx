@@ -173,7 +173,7 @@ export function Stats(): React.JSX.Element {
 
       <div className="stats-body">
         {/* What the agents spent, read from the transcripts themselves. */}
-        <UsageOverview tokenStats={stats.tokens} />
+        <UsageOverview />
 
         {/* ---- the streak, which is the thing people actually come for ---- */}
         <section className="stats-streaks">

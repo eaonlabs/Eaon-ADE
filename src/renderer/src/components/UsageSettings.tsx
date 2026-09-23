@@ -34,8 +34,8 @@ export function UsageSettings(): React.JSX.Element {
   return (
     <>
       <p className="settings-lede">
-        Read from the transcripts Claude Code already writes, so the token counts are exact and
-        nothing leaves this machine. What is <em>not</em> on disk anywhere is your plan's ceiling —
+        The token counts are exact and nothing leaves this machine. What is <em>not</em> on disk
+        anywhere is your plan's ceiling —
         Anthropic reports that per request — so the percentage is measured against a limit you set.
       </p>
 

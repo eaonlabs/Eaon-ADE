@@ -1,8 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import {
   Brain,
   ChevronRight,
+  Compass,
+  Clock,
   Command,
+  FileText,
   Flame,
   Folder,
   FolderOpen,
@@ -10,20 +13,24 @@ import {
   History,
   LayoutList,
   NotebookPen,
+  GitPullRequest,
+  Layers,
   Pencil,
   Plus,
+  Search,
   Square,
   Terminal,
   Trash2,
   X
 } from 'lucide-react'
 import {
-  PANEL_KINDS,
-  PANEL_LABEL,
+  isPanelKind,
+  projectOf,
   type Workspace,
   type WorkspaceFolder,
   type WorkspaceKind
 } from '@shared/types'
+import { AgentRoster } from './AgentRoster'
 import { useStore } from '../store/useStore'
 import { MOD, basename } from '../lib/util'
 
@@ -33,7 +40,8 @@ const GLYPH: Record<WorkspaceKind, typeof Terminal> = {
   board: LayoutList,
   vault: NotebookPen,
   brain: Brain,
-  stats: Flame
+  stats: Flame,
+  browser: Compass
 }
 
 /**
@@ -125,20 +133,45 @@ export function WorkspaceRail(): React.JSX.Element {
   const toggleFolder = useStore((s) => s.toggleFolder)
   const moveToFolder = useStore((s) => s.moveToFolder)
   const openWizard = useStore((s) => s.openWizard)
-  const openPanel = useStore((s) => s.openPanel)
+  const stagePage = useStore((s) => s.stagePage)
+  const setStagePage = useStore((s) => s.setStagePage)
   const setPalette = useStore((s) => s.setPalette)
   const setResumeOpen = useStore((s) => s.setResumeOpen)
   const confirmClose = useStore((s) => s.settings.confirmClose)
+  /*
+   * Which workspaces have their roster open, by id.
+   *
+   * Component state rather than the store: which lists you left open is not
+   * worth a line in state.json, and the rail outlives every workspace switch
+   * so nothing is lost by keeping it here.
+   */
+  const [rosters, setRosters] = useState<ReadonlySet<string>>(() => new Set())
+  const toggleRoster = (id: string): void =>
+    setRosters((open) => {
+      const next = new Set(open)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
 
   const [menu, setMenu] = useState<MenuTarget>(null)
   const [editing, setEditing] = useState<Editing>(null)
   /** Folder id the pointer is over mid-drag, or 'root' for the top level. */
   const [dropOn, setDropOn] = useState<string | null>(null)
 
+  // The list is projects and nothing else. A panel is a destination in the nav
+  // above, and a browser is a *tab* of a project, in the strip above the stage.
   const shells = workspaces.filter((w) => w.kind === 'terminals')
-  const panels = workspaces.filter((w) => w.kind !== 'terminals')
   const loose = shells.filter((w) => !w.folderId)
-  const unopened = PANEL_KINDS.filter((kind) => !panels.some((w) => w.kind === kind))
+
+  const active = workspaces.find((w) => w.id === activeId) ?? null
+  /*
+   * Which panel the nav should light, if any.
+   *
+   * Read from the workspace you are actually in rather than from a mode of its
+   * own, so the lit row and the stage cannot disagree — and `null` the moment a
+   * stage page is showing, because a stage page outranks the workspace.
+   */
+  const activePanel = stagePage === null && active && isPanelKind(active.kind) ? active.kind : null
 
   // Any click elsewhere, Escape, or the window moving underneath it puts the
   // menu away — it is positioned in viewport coordinates and cannot follow.
@@ -208,59 +241,70 @@ export function WorkspaceRail(): React.JSX.Element {
     const working = !panel && w.panes.some((p) => p.working)
 
     return (
-      <button
-        key={w.id}
-        className={`ws-item hue-${w.hue}`}
-        data-active={w.id === activeId}
-        data-panel={panel}
-        data-nested={!panel && Boolean(w.folderId)}
-        // Only terminal workspaces are filed. The panels are one of each and
-        // already have a section of their own; grouping them too would be the
-        // same idea twice on one screen.
-        draggable={!panel && !renaming}
-        onDragStart={(e) => {
-          e.dataTransfer.setData(DRAG_TYPE, w.id)
-          e.dataTransfer.effectAllowed = 'move'
-        }}
-        onDragEnd={() => setDropOn(null)}
-        onClick={() => {
-          if (!renaming) setActive(w.id)
-        }}
-        onContextMenu={(e) => openMenu(e, 'workspace', w.id)}
-        title={renaming ? undefined : w.cwd}
-        // The arc is decoration; this is how the same fact reaches a screen
-        // reader, which cannot see something spin.
-        aria-label={working ? `${w.name}, running` : undefined}
-      >
-        {glyph(Icon, working)}
-        {renaming ? (
-          <NameInput
-            value={w.name}
-            onCommit={(next) => {
-              renameWorkspace(w.id, next)
-              setEditing(null)
-            }}
-            onCancel={() => setEditing(null)}
-          />
-        ) : (
-          <span className="ws-label">
-            <span className="ws-name">{w.name}</span>
-            {/* A panel says which project it is pointed at; a folder workspace is
-                already named after its folder and would just repeat itself. */}
-            {panel && <span className="ws-where">{basename(w.cwd) || w.cwd}</span>}
-          </span>
-        )}
-        {!renaming && attention.length > 0 && (
-          <span className="ws-attention">{attention.length}</span>
-        )}
+      <React.Fragment key={w.id}>
+        <button
+          className={`ws-item hue-${w.hue}`}
+          data-active={w.id === activeId}
+          data-panel={panel}
+          data-nested={!panel && Boolean(w.folderId)}
+          // Only terminal workspaces are filed. The panels are one of each and
+          // already have a section of their own; grouping them too would be the
+          // same idea twice on one screen.
+          draggable={!panel && !renaming}
+          onDragStart={(e) => {
+            e.dataTransfer.setData(DRAG_TYPE, w.id)
+            e.dataTransfer.effectAllowed = 'move'
+          }}
+          onDragEnd={() => setDropOn(null)}
+          onClick={() => {
+            if (!renaming) setActive(w.id)
+          }}
+          onContextMenu={(e) => openMenu(e, 'workspace', w.id)}
+          title={renaming ? undefined : w.cwd}
+          // The arc is decoration; this is how the same fact reaches a screen
+          // reader, which cannot see something spin.
+          aria-label={working ? `${w.name}, running` : undefined}
+        >
+          {glyph(Icon, working)}
+          {renaming ? (
+            <NameInput
+              value={w.name}
+              onCommit={(next) => {
+                renameWorkspace(w.id, next)
+                setEditing(null)
+              }}
+              onCancel={() => setEditing(null)}
+            />
+          ) : (
+            <span className="ws-label">
+              <span className="ws-name">{w.name}</span>
+              {/* A panel says which project it is pointed at; a folder workspace is
+                  already named after its folder and would just repeat itself. */}
+              {panel && <span className="ws-where">{basename(w.cwd) || w.cwd}</span>}
+            </span>
+          )}
+          {!renaming && attention.length > 0 && (
+            <span className="ws-attention">{attention.length}</span>
+          )}
+          {/*
+            No close button on the row. It sat under the pointer on the way to
+            every workspace you were only trying to switch to, and one slip ended
+            however many agents were inside. Closing lives in the right-click menu
+            now, where it takes a deliberate second click to reach.
+          */}
+          {!renaming && !panel && <span className="ws-count">{w.panes.length}</span>}
+        </button>
         {/*
-          No close button on the row. It sat under the pointer on the way to
-          every workspace you were only trying to switch to, and one slip ended
-          however many agents were inside. Closing lives in the right-click menu
-          now, where it takes a deliberate second click to reach.
+          A sibling of the row, never a child of it: the row is a button,
+          and the roster has buttons of its own inside.
         */}
-        {!renaming && !panel && <span className="ws-count">{w.panes.length}</span>}
-      </button>
+        <AgentRoster
+          workspace={w}
+          open={rosters.has(w.id)}
+          onToggle={() => toggleRoster(w.id)}
+          nested={!panel && Boolean(w.folderId)}
+        />
+      </React.Fragment>
     )
   }
 
@@ -342,10 +386,70 @@ export function WorkspaceRail(): React.JSX.Element {
   const menuWorkspace = menu?.kind === 'workspace' ? workspaces.find((w) => w.id === menu.id) : null
   const menuFolder = menu?.kind === 'folder' ? folders.find((f) => f.id === menu.id) : null
 
+  /*
+   * The destinations, above the project list.
+   *
+   * Three of these are places that already existed and were only reachable by
+   * a shortcut or a chip — Search was ⌘K and nothing else, Tasks was a Board
+   * workspace you had to open and then close again. Naming them in the rail is
+   * most of what the redesign is: the app could already do these, it just
+   * never said so.
+   */
+  const dest = (
+    key: string,
+    label: string,
+    Icon: typeof Terminal,
+    on: boolean,
+    go: () => void
+  ): React.JSX.Element => (
+    <button className="rail-dest" key={key} data-on={on} onClick={go}>
+      <Icon size={15} />
+      <span>{label}</span>
+    </button>
+  )
+
   return (
     <nav className="rail" aria-label="Workspaces">
+      <button className="rail-new" onClick={() => openWizard('grid')} title={`New workspace (${MOD}T)`}>
+        <span className="rail-new-glyph">
+          <Plus size={14} />
+        </span>
+        New Workspace
+      </button>
+
+      {/*
+        The stage pages, and only those.
+
+        The panels — Tasks, Vault, Brain, Stats — are not here. They live in the
+        strip above the stage, which has room across rather than down, and the
+        Brain in particular belongs there: there is one per project, so a single
+        row in a rail that spans every project could only ever be lying about
+        three of them.
+      */}
+      <div className="rail-dests">
+        {dest('search', 'Search', Search, stagePage === 'search', () => setStagePage('search'))}
+        {dest('workspaces', 'Workspaces', Layers, stagePage === null && !activePanel, () => {
+          setStagePage(null)
+          // Leaving a panel means going back to the work, not just dropping a
+          // stage page that was never showing. Back to *this* project's shell
+          // where there is one — a panel knows the folder it was opened from.
+          if (activePanel) {
+            const here = projectOf({ cwd: active?.cwd ?? '', projectRoot: null })
+            const back = shells.find((w) => projectOf(w) === here) ?? shells[0]
+            if (back) setActive(back.id)
+          }
+        })}
+        {dest('pulls', 'Pull requests', GitPullRequest, stagePage === 'pulls', () =>
+          setStagePage('pulls')
+        )}
+        {dest('pages', 'Pages', FileText, stagePage === 'pages', () => setStagePage('pages'))}
+        {dest('automations', 'Automations', Clock, stagePage === 'automations', () =>
+          setStagePage('automations')
+        )}
+      </div>
+
       <div className="rail-head">
-        <span className="eyebrow">Workspaces</span>
+        <span className="eyebrow">Projects</span>
         <span className="rail-count">{shells.length}</span>
         <button
           className="icon-btn"
@@ -398,43 +502,9 @@ export function WorkspaceRail(): React.JSX.Element {
 
         {folders.map(folderRow)}
         {loose.map(item)}
-
-        {panels.length > 0 && (
-          <>
-            <div className="rail-group">
-              <span className="eyebrow">Open panels</span>
-            </div>
-            {panels.map(item)}
-          </>
-        )}
       </div>
 
       <div className="rail-foot">
-        {/*
-          Only what is not already open. Opening a panel is the same act as
-          opening a workspace — it joins the list above — so a chip that stayed
-          behind would be the same thing named twice on one screen. When all
-          three are open this row is gone and the list is the whole story.
-        */}
-        {unopened.length > 0 && (
-          <div className="rail-panels">
-            {unopened.map((kind) => {
-              const Icon = GLYPH[kind]
-              return (
-                <button
-                  className="rail-chip"
-                  key={kind}
-                  onClick={() => openPanel(kind)}
-                  title={`Open the ${PANEL_LABEL[kind]}`}
-                >
-                  <Icon size={13} />
-                  {PANEL_LABEL[kind]}
-                </button>
-              )
-            })}
-          </div>
-        )}
-
         <button className="rail-action" onClick={() => setResumeOpen(true)}>
           <History size={14} />
           Resume a session

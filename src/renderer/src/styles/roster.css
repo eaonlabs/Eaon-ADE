@@ -1,0 +1,199 @@
+/*
+ * The agent roster: the agents inside a workspace, under its row in the rail.
+ *
+ * Indented to start under the workspace's name rather than its glyph, so the
+ * rail reads as one hierarchy — project, workspace, the agents in it — instead
+ * of three lists that happen to be stacked.
+ *
+ * Nothing here uses `--text-dim`. It derives to under 3:1 against its own
+ * background in every theme we ship, and these rows are small text carrying
+ * the only live status the rail has. `--text-lo` is the quietest token that
+ * still clears the floor.
+ */
+
+.ros {
+  margin: 1px 0 3px 22px;
+  border-radius: var(--r-md);
+  border: 1px solid transparent;
+}
+
+/* Open, it is a card: the rows belong to each other and not to the rail. */
+.ros[data-open='true'] {
+  border-color: var(--line-100);
+  background: var(--ink-100);
+  padding: 2px;
+}
+
+.ros[data-nested='true'] {
+  margin-left: 34px;
+}
+
+.ros-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  color: var(--text-lo);
+  font-size: var(--fs-micro);
+  text-align: left;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.ros-head:hover {
+  color: var(--text-hi);
+  background: var(--ink-300);
+}
+
+.ros-title {
+  flex: 1;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Shut, the marks overlap slightly — a stack of agents, not a row of icons. */
+.ros-marks {
+  display: flex;
+  align-items: center;
+}
+
+.ros-mini {
+  display: inline-grid;
+  place-items: center;
+  margin-right: -4px;
+  padding: 1px;
+  border-radius: 999px;
+  background: var(--ink-200);
+}
+
+.ros-mini:last-child {
+  margin-right: 3px;
+}
+
+.ros-chev {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+
+.ros-list {
+  display: flex;
+  flex-direction: column;
+  margin: 1px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ros-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  color: var(--text-mid);
+  font-size: var(--fs-micro);
+  text-align: left;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.ros-row:hover {
+  background: var(--ink-300);
+  color: var(--text-hi);
+}
+
+.ros-mark {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.ros-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-hi);
+}
+
+/* The state pushes the clock to the right edge and takes the slack itself. */
+.ros-state {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-lo);
+}
+
+.ros-row[data-state='attention'] .ros-state {
+  color: var(--attention);
+}
+
+.ros-row[data-state='working'] .ros-state {
+  color: var(--live);
+}
+
+.ros-row[data-state='exited'] .ros-state {
+  color: var(--danger);
+}
+
+.ros-when {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-lo);
+}
+
+/* ---- the state dot ------------------------------------------------------
+ * One character's worth of status, in the two places that show it: the head
+ * of each row, and the collapsed chip, where it stands for the loudest agent
+ * in there.
+ */
+
+.ros-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--text-lo);
+}
+
+.ros-dot[data-state='idle'] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--text-lo);
+}
+
+.ros-dot[data-state='exited'] {
+  background: var(--danger);
+}
+
+.ros-dot[data-state='attention'] {
+  background: var(--attention);
+}
+
+.ros-dot[data-state='working'] {
+  background: var(--live);
+  animation: ros-pulse 1.8s var(--ease) infinite;
+}
+
+@keyframes ros-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* The dot is a colour and a shape as well as a blink, so stilling it loses
+   nothing — the same reason the pane glyph's pulse is stilled here too. */
+[data-reduce-motion='true'] .ros-dot[data-state='working'] {
+  animation: none;
+}

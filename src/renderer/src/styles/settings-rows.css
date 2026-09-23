@@ -1,0 +1,120 @@
+/*
+ * The settings row.
+ *
+ * Accounts, Remote hosts and Integrations all draw the same object — a mark, a
+ * name with a line under it, and a control on the right — and each had drawn it
+ * separately. Measured on the real stylesheets, the same row came out at three
+ * different sizes on three pages of one window:
+ *
+ *            padding      mark    row height
+ *   account  10px 12px    30px    56px
+ *   host      9px 12px    28px    53px
+ *   ig-card  11px 12px    30px    81px
+ *
+ * None of that was decided; it is three people landing within two pixels of
+ * each other. `integrations.css` even opens by saying it uses "the same row
+ * grammar as the account switcher" — the intent was always one row, so this is
+ * that row, in one place, rather than three that have to be kept in step by
+ * hand.
+ *
+ * Loaded after the three panel sheets so this is the last word on the grammar
+ * they share; everything that is genuinely particular to one of them stays in
+ * its own file and still wins by being more specific.
+ *
+ * Deliberately NOT unified, because the content differs rather than the taste:
+ *   · the integration mark's fixed bone/ink pair — a real brand logo needs a
+ *     surface that does not move with the theme (see integrations.css)
+ *   · the mono face on a host's address, which is an address
+ *   · each row's own status colours and hover edges
+ *   · the control on the right: a status pill, an add button and a switch
+ *     button are three different acts and should not look like one
+ */
+
+.account,
+.host-row,
+.ig-card {
+  display: flex;
+  gap: 11px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-200);
+  background: var(--ink-100);
+}
+
+/* Two lines centre on the mark; three lines start at it, or the glyph floats
+   in the middle of a stack it is meant to label. */
+.account,
+.host-row {
+  align-items: center;
+}
+.ig-card {
+  align-items: flex-start;
+}
+
+.account-mark,
+.host-mark,
+.ig-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid var(--line-200);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.account-name,
+.host-name,
+.ig-name {
+  color: var(--text-hi);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+/*
+ * One secondary step, not three — and no `--text-dim` anywhere in this row.
+ *
+ * Integrations was running its description at 12px and its diagnostic line at
+ * 11px — `--fs-label`, which nothing else in the settings area uses at all —
+ * while every other page said 10px. A description the same size as the name it
+ * sits under is what made those cards half again as tall as the rows beside
+ * them. Size is uniform now and colour carries the hierarchy instead.
+ *
+ * On the colour: these lines are not decoration. `ubuntu@10.0.0.4 · port 22`,
+ * `Claude Max · current`, `LINEAR_API_KEY set` — you read them to decide
+ * something. They were on `--text-dim`, which is the dimmest step the app has.
+ *
+ * CONTRAST IS PER THEME, so no fixed ratio belongs in this comment. themes.ts
+ * derives the text tokens as `mix(fg, bg, t)` at a constant t for every theme
+ * — textMid 0.30, textLo 0.52, textDim 0.68 — so identical CSS lands at a
+ * different ratio in each palette, depending only on how far apart that
+ * theme's fg and bg are. Measured across all 20 themes, this row's value line
+ * against its own `--ink-100`:
+ *
+ *   on --text-dim (before)   every one of the 20 under 3.0, best 2.84
+ *   on --text-lo  (now)      17 of 20 clear 3.0; spread 2.17 → 4.66
+ *
+ * The three still short are Catppuccin Latte 2.17, Solarized Light 2.69 and
+ * One Dark 2.77 — low-contrast palettes by design, which is the point of them,
+ * so a fixed 52% mix cannot clear the floor there. Fixing those three properly
+ * means clamping the derivation in themes.ts against measured contrast rather
+ * than trusting a constant, which is a whole-app change and not this file's to
+ * make. If it lands, this row gets it for free.
+ */
+.account-meta,
+.host-meta,
+.ig-detail {
+  font-size: var(--fs-micro);
+  color: var(--text-lo);
+}
+
+/* A step brighter again, because it is the one line that is a description
+   rather than a value, and should read first. `--text-mid` clears 3.0 in all
+   20 themes (worst: Catppuccin Latte at 3.39). */
+.ig-blurb {
+  font-size: var(--fs-micro);
+  color: var(--text-mid);
+}

@@ -477,6 +477,12 @@
   color: var(--accent);
   border-color: var(--accent-edge);
 }
+/* A brand mark holds its colour at the row's 45% opacity and can still read as
+   available. Draining it says "not on this machine" the way the greyed name
+   and the `not found on PATH` line already do. */
+.agent-row:disabled .agent-mark {
+  filter: grayscale(1);
+}
 .agent-meta {
   display: block;
   flex: 1;

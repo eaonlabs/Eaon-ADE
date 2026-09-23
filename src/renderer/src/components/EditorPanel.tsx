@@ -200,6 +200,8 @@ export function EditorPanel({
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const saveTimer = useRef<number | null>(null)
+  /** A line a search hit asked for, consumed once its view exists. */
+  const pendingLine = useRef<number | null>(null)
   // The editor's change listener is created once per file, so it reads these
   // through refs rather than closing over stale state.
   const autosaveRef = useRef(autosave)
@@ -313,11 +315,42 @@ export function EditorPanel({
         ]
       })
     })
+    // Now that the view exists for this doc, honour a line a search hit asked
+    // for. Clamped, because a hit's line can outrun the file if it changed on
+    // disk between the search and the click.
+    const want = pendingLine.current
+    pendingLine.current = null
+    if (want != null) {
+      const view = viewRef.current
+      const at = view.state.doc.line(Math.min(Math.max(1, want), view.state.doc.lines))
+      view.dispatch({
+        selection: { anchor: at.from },
+        effects: EditorView.scrollIntoView(at.from, { y: 'center' })
+      })
+    }
+
     return () => {
       viewRef.current?.destroy()
       viewRef.current = null
     }
   }, [file, doc, save])
+
+  // The file tree hands a path over through the store rather than by prop:
+  // the tree lives in its own dock tab, so there is no parent to thread it
+  // through. Cleared once opened, so re-selecting the same file works.
+  const editorTarget = useStore((s) => s.editorTarget)
+  const clearEditorTarget = useStore((s) => s.clearEditorTarget)
+  useEffect(() => {
+    if (!editorTarget) return
+    // The line is handed to the effect that builds the view, not dispatched
+    // here. This effect runs before that one — the view is destroyed and
+    // rebuilt for every file — so a selection set from here is wiped by the
+    // rebuild a moment later. Measured: the cursor landed on line 1 every time.
+    pendingLine.current = editorTarget.line ?? null
+    void open(editorTarget.path)
+    clearEditorTarget()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editorTarget])
 
   const kind = file ? previewKindFor(file) : 'unsupported'
   const previewLocked = kind === 'image' || kind === 'pdf'

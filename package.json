@@ -1,7 +1,7 @@
 {
   "name": "eaon-ade",
   "version": "1.1.2",
-  "description": "Eaon ADE — an agentic development environment. Run many CLI coding agents side by side.",
+  "description": "Eaon ADE \u2014 an agentic development environment. Run many CLI coding agents side by side.",
   "main": "./out/main/index.js",
   "author": "Eaon",
   "license": "MIT",
@@ -20,6 +20,8 @@
     "check:accounts": "node scripts/check-accounts.mjs",
     "check:codex-usage": "node scripts/check-codex-usage.mjs",
     "check:usage-refresh": "node scripts/check-usage-refresh.mjs",
+    "check:gpu-contexts": "node scripts/check-gpu-contexts.mjs",
+    "check:memory": "node scripts/check-memory.mjs",
     "check:ssh": "node scripts/check-ssh.mjs",
     "check:ssh-worktrees": "node scripts/check-ssh-worktrees.mjs",
     "test:brain": "node scripts/test-brain-skill.mjs",
@@ -34,7 +36,10 @@
     "verify:mac": "node scripts/verify-mac.mjs",
     "notarize:mac": "node scripts/notarize-mac.mjs",
     "release:github": "node scripts/publish-release.mjs",
-    "check:linux": "node scripts/check-linux.mjs"
+    "check:automations": "node scripts/check-automation-schedule.mjs",
+    "check:linux": "node scripts/check-linux.mjs",
+    "check:agents": "node scripts/check-agent-detect.mjs",
+    "check:roster": "node scripts/check-roster.mjs"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",

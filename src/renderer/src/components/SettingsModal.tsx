@@ -3,6 +3,8 @@ import {
   Bot,
   Compass,
   Gauge,
+  ArrowLeft,
+  ExternalLink,
   Info,
   Keyboard,
   Mic,
@@ -10,7 +12,9 @@ import {
   Palette,
   Plug,
   Plus,
+  Search,
   Server,
+  Sparkles,
   Terminal,
   UserRound,
   Volume2,
@@ -20,6 +24,10 @@ import { ACCENT_OVERRIDES, THEMES } from '@shared/themes'
 import { SEARCH_ENGINES, engineById } from '@shared/browser'
 import { useStore } from '../store/useStore'
 import { IS_MAC } from '../lib/util'
+import { SUDOERS, isSudo, useKeyLore, type Lore } from '../lib/eggs'
+
+/** Read off the global rather than imported across the preload boundary. */
+type SysInfo = Awaited<ReturnType<typeof window.eaon.sys.info>>
 import { ThemeCard } from './ThemeCard'
 import { VoicePanel } from './VoicePanel'
 import { SpeechPanel } from './SpeechPanel'
@@ -44,20 +52,131 @@ type SectionId =
   | 'shortcuts'
   | 'about'
 
-const SECTIONS: { id: SectionId; label: string; icon: typeof Palette }[] = [
-  { id: 'appearance', label: 'Appearance', icon: Palette },
-  { id: 'terminal', label: 'Terminal', icon: Terminal },
-  { id: 'browser', label: 'Browser', icon: Compass },
-  { id: 'agents', label: 'Agents', icon: Bot },
-  { id: 'accounts', label: 'Accounts', icon: UserRound },
-  { id: 'integrations', label: 'Integrations', icon: Plug },
-  { id: 'hosts', label: 'Remote hosts', icon: Server },
-  { id: 'usage', label: 'Plan usage', icon: Gauge },
-  { id: 'voice', label: 'Voice', icon: Mic },
-  { id: 'speech', label: 'Spoken alerts', icon: Volume2 },
-  { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
-  { id: 'about', label: 'About', icon: Info }
+interface Section {
+  id: SectionId
+  label: string
+  icon: typeof Palette
+  /** The one line under the page title. */
+  blurb: string
+  /**
+   * What this page actually contains, for the search field.
+   *
+   * Matching page *names* would be a search that only finds what you could
+   * already see in the list beside it. Typing "haptic" should land on the
+   * control, not on a page that happens to be spelled similarly.
+   */
+  keywords: string[]
+}
+
+const SECTIONS: Section[] = [
+  {
+    id: 'accounts',
+    label: 'Accounts',
+    icon: UserRound,
+    blurb: 'The accounts your panes run as.',
+    keywords: ['account', 'sign in', 'login', 'claude', 'codex', 'max', 'plan', 'switch', 'email']
+  },
+  {
+    id: 'appearance',
+    label: 'Appearance',
+    icon: Palette,
+    blurb: 'Every surface, accent and terminal colour comes from the theme. Pick one and the whole window follows.',
+    keywords: ['theme', 'colour', 'color', 'dark', 'light', 'accent', 'font', 'tabs', 'motion', 'contrast']
+  },
+  {
+    id: 'usage',
+    label: 'Plan usage',
+    icon: Gauge,
+    blurb: 'What your agents have spent, read from the transcripts they already write.',
+    keywords: ['usage', 'tokens', 'cost', 'limit', 'quota', 'week', 'session', 'anthropic', 'percentage']
+  },
+  {
+    id: 'agents',
+    label: 'Agents',
+    icon: Bot,
+    blurb: "Eaon ADE starts a shell and types the agent's command into it. Nothing is wrapped or intercepted.",
+    keywords: ['agent', 'claude', 'codex', 'gemini', 'aider', 'opencode', 'copilot', 'grok', 'kimi', 'mistral', 'default', 'bell', 'permission']
+  },
+  {
+    id: 'terminal',
+    label: 'Terminal',
+    icon: Terminal,
+    blurb: 'These apply to every open pane straight away — no restart, no reconnect.',
+    keywords: ['terminal', 'font', 'size', 'line height', 'cursor', 'blink', 'scrollback', 'shell', 'zsh', 'bash']
+  },
+  {
+    id: 'browser',
+    label: 'Browser',
+    icon: Compass,
+    blurb: 'A browser tab is an ordinary browser pointed at what you are building. The address bar takes a bare port — type 5173 and it goes there.',
+    keywords: ['browser', 'preview', 'url', 'address', 'search engine', 'zoom', 'home', 'localhost', 'port']
+  },
+  {
+    id: 'voice',
+    label: 'Voice',
+    icon: Mic,
+    blurb: 'Dictation runs on this machine. Your voice never leaves the computer.',
+    keywords: ['voice', 'dictation', 'speech', 'whisper', 'model', 'microphone', 'hold to talk', 'language']
+  },
+  {
+    id: 'speech',
+    label: 'Spoken alerts',
+    icon: Volume2,
+    blurb: 'An agent that has stopped working can say so, which is useful when eight of them are running.',
+    keywords: ['spoken', 'alerts', 'voice', 'announce', 'finished', 'say', 'speed', 'volume', 'notification']
+  },
+  {
+    id: 'shortcuts',
+    label: 'Shortcuts',
+    icon: Keyboard,
+    blurb: 'Inside a pane the clipboard keys belong to the terminal. Everything else below belongs to Eaon ADE.',
+    keywords: ['shortcut', 'keyboard', 'key', 'chord', 'command', 'palette', 'hotkey']
+  },
+  {
+    id: 'integrations',
+    label: 'Integrations',
+    icon: Plug,
+    blurb: 'Panes inherit these, so an agent can push a branch or read an issue without being handed a token.',
+    keywords: ['integration', 'github', 'gitlab', 'bitbucket', 'jira', 'linear', 'azure', 'token', 'credential']
+  },
+  {
+    id: 'hosts',
+    label: 'Remote hosts',
+    icon: Server,
+    blurb: 'Read from your own ~/.ssh/config every time, never copied here.',
+    keywords: ['remote', 'host', 'ssh', 'server', 'config', 'proxyjump', 'key', 'machine']
+  },
+  {
+    id: 'about',
+    label: 'About',
+    icon: Info,
+    blurb: 'Everything runs on this machine — no account, no telemetry, no update pings.',
+    keywords: ['about', 'version', 'build', 'update', 'reset', 'licence', 'license', 'github', 'source']
+  }
 ]
+
+/** The blank-space-separated blocks of the sidebar, in order. */
+const GROUPS: { title: string; items: SectionId[] }[] = [
+  { title: 'Personal', items: ['accounts', 'appearance', 'usage'] },
+  { title: 'Editor & workflow', items: ['agents', 'terminal', 'browser', 'voice', 'speech', 'shortcuts'] },
+  { title: 'Connections', items: ['integrations', 'hosts'] },
+  { title: 'System', items: ['about'] }
+]
+
+/**
+ * True when the field's text matches this page or anything on it.
+ *
+ * Prefixes of whole words, so "short" finds Shortcuts but "cut" does not —
+ * the same shape of match a native settings field makes.
+ */
+function matches(section: Section, query: string): boolean {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return true
+  if (section.label.toLowerCase().includes(needle)) return true
+  return section.keywords.some((term) =>
+    term.split(' ').some((word) => word.startsWith(needle)) || term.startsWith(needle)
+  )
+}
 
 /*
  * Two tables rather than one with substitutions, because the keymaps genuinely
@@ -165,12 +284,58 @@ export function SettingsModal(): React.JSX.Element | null {
   const agents = useStore((s) => s.agents)
   const sys = useStore((s) => s.appVersion)
 
-  const [section, setSection] = useState<SectionId>('appearance')
+  const [section, setSection] = useState<SectionId>('accounts')
+  const [query, setQuery] = useState('')
   const [statePath, setStatePath] = useState('')
 
+  /** xyzzy: 'said' while the game's reply is on screen, 'shown' once it isn't. */
+  const [xyzzy, setXyzzy] = useState<'no' | 'said' | 'shown'>('no')
+  const [machine, setMachine] = useState<SysInfo | null>(null)
+  /** The theme the konami code just turned up, for the one-off note. */
+  const [unlocked, setUnlocked] = useState<string | null>(null)
+
+  // Guarded: this comes off disk, and a hand-edited state.json is allowed to
+  // be wrong without taking Appearance down with it.
+  const found = Array.isArray(settings.foundThemes) ? settings.foundThemes : []
+
   useEffect(() => {
-    if (open) window.eaon.state.path().then(setStatePath)
+    if (!open) return
+    void window.eaon.state.path().then(setStatePath)
+    void window.eaon.sys.info().then(setMachine)
   }, [open])
+
+  // Whatever was found last time stays found; the state is reset per visit.
+  useEffect(() => {
+    if (!open) {
+      setXyzzy('no')
+      setUnlocked(null)
+    }
+  }, [open])
+
+  const onLore = (lore: Lore): void => {
+    if (lore === 'quit') {
+      setOpen(false)
+      return
+    }
+    if (lore === 'xyzzy') {
+      // Adventure's reply first. The machine follows a beat later, which is
+      // the joke: in the cave nothing happens, here something does.
+      setSection('about')
+      setXyzzy('said')
+      window.setTimeout(() => setXyzzy('shown'), 1100)
+      return
+    }
+    // konami. Idempotent: finding it twice is not an error, it is just Tuesday.
+    const secret = THEMES.filter((t) => t.secret)
+    const next = secret.find((t) => !found.includes(t.id)) ?? secret[0]
+    if (!next) return
+    setSection('appearance')
+    setUnlocked(next.id)
+    if (!found.includes(next.id)) update({ foundThemes: [...found, next.id] })
+  }
+
+  // Sequences are only watched while Settings is on screen.
+  useKeyLore(open, onLore)
 
   // Escape leaves Settings, the same as the close button.
   useEffect(() => {
@@ -187,37 +352,97 @@ export function SettingsModal(): React.JSX.Element | null {
 
   if (!open) return null
 
-  const dark = THEMES.filter((t) => t.mode === 'dark')
-  const light = THEMES.filter((t) => t.mode === 'light')
+  /*
+   * A secret theme is listed once it has been found — and also whenever it is
+   * the one in use, so that a profile copied to another machine cannot leave
+   * someone staring at a palette they have no way to switch back to.
+   */
+  const visible = THEMES.filter(
+    (t) => !t.secret || found.includes(t.id) || settings.themeId === t.id
+  )
+  const dark = visible.filter((t) => t.mode === 'dark')
+  const light = visible.filter((t) => t.mode === 'light')
 
   const current = SECTIONS.find((s) => s.id === section) ?? SECTIONS[0]
 
   return (
     <div className="settings-surface" role="region" aria-label="Settings">
       <nav className="settings-nav" aria-label="Settings sections">
-        <p className="eyebrow settings-nav-title">Settings</p>
-        {SECTIONS.map((s) => {
-          const Icon = s.icon
-          return (
-            <button
-              className="settings-nav-item"
-              key={s.id}
-              data-on={section === s.id}
-              onClick={() => setSection(s.id)}
-            >
-              <Icon size={14} />
-              {s.label}
+        <button className="settings-back" onClick={() => setOpen(false)}>
+          <ArrowLeft size={15} />
+          Back
+        </button>
+        <h2 className="settings-nav-title">Settings</h2>
+
+        <span className="settings-search">
+          <Search size={13} />
+          <input
+            value={query}
+            placeholder="Search settings…"
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="Search settings"
+          />
+          {query && (
+            <button className="icon-btn" style={{ width: 18, height: 18 }} onClick={() => setQuery('')} aria-label="Clear">
+              <X size={11} />
             </button>
-          )
-        })}
-        <span className="settings-nav-foot mono">
-          {THEMES.find((t) => t.id === settings.themeId)?.name ?? 'Custom'} · v{sys}
+          )}
         </span>
+
+        <div className="settings-groups">
+          {GROUPS.map((group) => {
+            const items = group.items
+              .map((id) => SECTIONS.find((sec) => sec.id === id))
+              .filter((sec): sec is Section => Boolean(sec) && matches(sec as Section, query))
+            // A group with nothing left in it is a heading over blank space.
+            if (items.length === 0) return null
+            return (
+              <div className="settings-group" key={group.title}>
+                <p className="eyebrow settings-group-title">{group.title}</p>
+                {items.map((sec) => {
+                  const Icon = sec.icon
+                  return (
+                    <button
+                      className="settings-nav-item"
+                      key={sec.id}
+                      data-on={section === sec.id}
+                      onClick={() => setSection(sec.id)}
+                    >
+                      <Icon size={14} />
+                      {sec.label}
+                    </button>
+                  )
+                })}
+              </div>
+            )
+          })}
+          {SECTIONS.every((sec) => !matches(sec, query)) &&
+            (isSudo(query) ? (
+              // No settings page is named sudo, so this lands in the
+              // nothing-matched slot rather than needing a branch of its own.
+              <p className="settings-none mono egg-sudo">
+                <b>{machine?.home.split('/').filter(Boolean).pop() ?? 'you'}</b> {SUDOERS}
+              </p>
+            ) : (
+              <p className="settings-none">Nothing matching “{query}”.</p>
+            ))}
+        </div>
+
+        <button
+          className="settings-doc"
+          onClick={() => window.eaon.sys.openExternal('https://github.com/sanscreates/Eaon-ADE#readme')}
+        >
+          <ExternalLink size={14} />
+          Documentation
+        </button>
       </nav>
 
       <div className="settings-main">
         <header className="settings-head">
-          <h1 className="settings-title">{current.label}</h1>
+          <span className="settings-heading">
+            <h1 className="settings-title">{current.label}</h1>
+            <p className="settings-blurb">{current.blurb}</p>
+          </span>
           <span className="spacer" />
           <button
             className="icon-btn"
@@ -232,15 +457,36 @@ export function SettingsModal(): React.JSX.Element | null {
         <div className="settings-pane">
             {section === 'appearance' && (
               <>
-                <p className="settings-lede">
-                  Every surface, accent and terminal colour comes from the theme. Pick one and the
-                  whole window follows.
-                </p>
 
                 <div className="section-head">
                   <span className="eyebrow">Theme</span>
-                  <span className="section-note">{THEMES.length} available</span>
+                  <span className="section-note">{visible.length} available</span>
                 </div>
+
+                {/*
+                  Shown the once, straight after the konami code. It names the
+                  theme rather than being coy about it — the find is the reward,
+                  and a note that made you hunt the grid for what changed would
+                  be spending the user's time to prolong a joke.
+                */}
+                {unlocked && (
+                  <p className="egg-note" role="status">
+                    <Sparkles size={13} />
+                    <span>
+                      <b>{THEMES.find((t) => t.id === unlocked)?.name}</b> unlocked. It stays in
+                      this list from now on.
+                    </span>
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        update({ themeId: unlocked })
+                        setUnlocked(null)
+                      }}
+                    >
+                      Use it
+                    </button>
+                  </p>
+                )}
 
                 <p className="eyebrow" style={{ margin: '4px 0 8px' }}>
                   Dark
@@ -297,6 +543,17 @@ export function SettingsModal(): React.JSX.Element | null {
                     </div>
                   </Row>
 
+                  <Row
+                    name="Workspace tabs"
+                    desc="A tab per workspace across the top of the stage, beside the rail."
+                  >
+                    <Toggle
+                      on={settings.showWorkspaceTabs}
+                      onChange={(v) => update({ showWorkspaceTabs: v })}
+                      label="Workspace tabs"
+                    />
+                  </Row>
+
                   <Row name="Reduce motion" desc="Turns off pulsing dots and panel animations.">
                     <Toggle
                       on={settings.reduceMotion}
@@ -310,9 +567,6 @@ export function SettingsModal(): React.JSX.Element | null {
 
             {section === 'terminal' && (
               <>
-                <p className="settings-lede">
-                  These apply to every open pane straight away — no restart, no reconnect.
-                </p>
 
                 <Row name="Font size" desc="Smaller text fits more agents on screen.">
                   <div className="stepper-num">
@@ -408,11 +662,6 @@ export function SettingsModal(): React.JSX.Element | null {
 
             {section === 'browser' && (
               <>
-                <p className="settings-lede">
-                  The preview panel is an ordinary browser pointed at what you are building. It
-                  opens on a dev server, and the address bar takes a bare port — type 5173 and it
-                  goes there.
-                </p>
 
                 <Row
                   name="Search engine"
@@ -479,10 +728,6 @@ export function SettingsModal(): React.JSX.Element | null {
 
             {section === 'agents' && (
               <>
-                <p className="settings-lede">
-                  Eaon ADE starts a shell and types the agent's command into it. Nothing is wrapped or
-                  intercepted.
-                </p>
 
                 <Row name="Default agent" desc="Pre-selected for new workspaces and new panes.">
                   <select
@@ -497,6 +742,17 @@ export function SettingsModal(): React.JSX.Element | null {
                       </option>
                     ))}
                   </select>
+                </Row>
+
+                <Row
+                  name="Skip permission prompts"
+                  desc="Claude Code starts with --dangerously-skip-permissions, so it acts without asking first. Applies to new panes and to sessions reopened on launch."
+                >
+                  <Toggle
+                    on={settings.bypassPermissions}
+                    onChange={(v) => update({ bypassPermissions: v })}
+                    label="Skip permission prompts"
+                  />
                 </Row>
 
                 <Row
@@ -573,10 +829,6 @@ export function SettingsModal(): React.JSX.Element | null {
 
             {section === 'shortcuts' && (
               <>
-                <p className="settings-lede">
-                  Inside a pane the clipboard keys belong to the terminal. Everything else below
-                  belongs to Eaon ADE.
-                </p>
                 <div className="shortcut-list">
                   {SHORTCUTS.map((s) => (
                     <div className="shortcut-row" key={s.keys}>
@@ -590,10 +842,6 @@ export function SettingsModal(): React.JSX.Element | null {
 
             {section === 'about' && (
               <>
-                <p className="settings-lede">
-                  Eaon ADE {sys}. Everything runs on this machine — no account, no telemetry, no update
-                  pings.
-                </p>
 
                 <Row
                   name="Updates"
@@ -612,7 +860,11 @@ export function SettingsModal(): React.JSX.Element | null {
                         direction: 'rtl'
                       }}
                     >
-                      {statePath}
+                      {/* rtl puts the ellipsis at the front, where a long path
+                          wants it — but it also drags the leading "/" round to
+                          the end, because a neutral at a paragraph edge takes
+                          the paragraph's direction. The LRM anchors it. */}
+                      {'‎' + statePath}
                     </span>
                   </span>
                 </Row>
@@ -633,11 +885,44 @@ export function SettingsModal(): React.JSX.Element | null {
                   </button>
                 </Row>
 
+                {/*
+                  xyzzy. Adventure answers "Nothing happens." when you say the
+                  magic word in the wrong room, which is the whole joke — here
+                  it answers the same way and then the machine prints anyway.
+
+                  Everything below is already on this page or one IPC away. The
+                  egg is the framing, not privileged information.
+                */}
+                {xyzzy !== 'no' && (
+                  <pre className="egg-machine mono" data-open={xyzzy === 'shown'}>
+                    <span className="egg-said">&gt; xyzzy{'\n'}Nothing happens.</span>
+                    {xyzzy === 'shown' && machine && (
+                      <span className="egg-rows">
+                        {'\n'}
+                        {[
+                          ['eaon ade', `v${sys}`],
+                          ['electron', machine.electron],
+                          ['chrome', /Chrome\/([\d.]+)/.exec(navigator.userAgent)?.[1] ?? '—'],
+                          ['node', machine.node],
+                          ['platform', `${machine.platform} · ${navigator.hardwareConcurrency} cores`],
+                          ['shell', machine.shell || 'login default'],
+                          ['themes', `${THEMES.length} (${found.length} found)`],
+                          ['agents', `${agents.length} configured`]
+                        ]
+                          .map(([k, v]) => `${k.padEnd(9)} ${v}`)
+                          .join('\n')}
+                        {'\n\n'}Well. Something happened.
+                      </span>
+                    )}
+                  </pre>
+                )}
+
                 <p className="setting-desc" style={{ marginTop: 20, lineHeight: 1.7 }}>
                   Dracula, Gruvbox, Nord, Tokyo Night, Catppuccin, One Dark and Rosé Pine palettes
                   are reproduced from their MIT-licensed projects, with thanks to their
                   authors.
                 </p>
+
               </>
             )}
         </div>

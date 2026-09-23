@@ -58,7 +58,8 @@ const GH_PRS = JSON.stringify([
     author: { login: 'sanscreates' },
     labels: [{ name: 'enhancement' }],
     updatedAt: '2026-08-05T10:00:00Z',
-    reviewDecision: 'APPROVED'
+    reviewDecision: 'APPROVED',
+    body: 'Adds a Windows build and a smoke test that installs it for real.'
   },
   {
     number: 2,
@@ -73,7 +74,9 @@ const GH_PRS = JSON.stringify([
     // An empty string, not null — this is what real `gh` actually sends for a
     // PR nobody has reviewed, confirmed against a live repository. The stub
     // said null at first and hid a bug where the blank string reached the UI.
-    reviewDecision: ''
+    reviewDecision: '',
+    // Blank, not absent — a body real gh sends for a PR with no description.
+    body: ''
   }
 ])
 const GH_ISSUES = JSON.stringify([
@@ -84,9 +87,53 @@ const GH_ISSUES = JSON.stringify([
     url: 'https://github.com/o/r/issues/7',
     author: { login: 'reporter' },
     labels: [{ name: 'bug' }],
-    updatedAt: '2026-08-04T10:00:00Z'
+    updatedAt: '2026-08-04T10:00:00Z',
+    body: 'Resize twice in quick succession and the whole window goes blank.'
   }
 ])
+
+
+// A PR's changeset, in the exact shape `gh pr view --json ...files` sends —
+// confirmed against a live repository, changeType included. One added file,
+// one renamed one, so the diff-splitting logic below has both to chew on.
+const GH_PR_VIEW = JSON.stringify({
+  number: 1,
+  title: 'Windows support',
+  url: 'https://github.com/o/r/pull/1',
+  baseRefName: 'main',
+  additions: 44,
+  deletions: 3,
+  changedFiles: 2,
+  files: [
+    { path: 'src/main/index.ts', additions: 40, deletions: 0, changeType: 'ADDED' },
+    { path: 'src/renamed-to.ts', additions: 4, deletions: 3, changeType: 'RENAMED' }
+  ]
+})
+
+// A two-file unified diff with a rename, so path-splitting has to read the
+// `b/` side of the header rather than the `a/` side — a renamed file's own
+// two names differ, and the Files tab lists the *new* one.
+const GH_PR_DIFF = [
+  'diff --git a/src/main/index.ts b/src/main/index.ts',
+  'new file mode 100644',
+  'index 0000000..1111111',
+  '--- /dev/null',
+  '+++ b/src/main/index.ts',
+  '@@ -0,0 +1,2 @@',
+  '+first file',
+  '+second line',
+  'diff --git a/src/renamed-from.ts b/src/renamed-to.ts',
+  'similarity index 90%',
+  'rename from src/renamed-from.ts',
+  'rename to src/renamed-to.ts',
+  '--- a/src/renamed-from.ts',
+  '+++ b/src/renamed-to.ts',
+  '@@ -1,3 +1,4 @@',
+  ' kept line',
+  '-old line',
+  '+new line',
+  '+added line'
+].join('\n')
 
 fs.writeFileSync(
   path.join(binDir, 'gh'),
@@ -100,8 +147,18 @@ fs.writeFileSync(
     GH_ISSUES,
     'JSON',
     'exit 0; fi',
+    `if [ "$1" = "pr" ] && [ "$2" = "view" ]; then cat <<'JSON'`,
+    GH_PR_VIEW,
+    'JSON',
+    'exit 0; fi',
+    `if [ "$1" = "pr" ] && [ "$2" = "diff" ]; then cat <<'DIFF'`,
+    GH_PR_DIFF,
+    'DIFF',
+    'exit 0; fi',
     'if [ "$1" = "pr" ] && [ "$2" = "review" ]; then',
     `  printf '%s\\0' "$@" > ${JSON.stringify(path.join(tmp, 'review-argv'))}`,
+    '  if [ "$4" = "--comment" ]; then echo "Commented on pull request #$3"; exit 0; fi',
+    '  if [ "$4" = "--request-changes" ]; then echo "Requested changes on pull request #$3"; exit 0; fi',
     '  echo "Approved pull request #$3"; exit 0; fi',
     'echo "unexpected gh invocation: $*" >&2; exit 1'
   ].join('\n')
@@ -238,8 +295,12 @@ try {
     JSON.stringify(pr2?.reviewDecision)
   )
 
+  check('a PR carries its body', pr1?.body === 'Adds a Windows build and a smoke test that installs it for real.', pr1?.body)
+  check("gh's empty-string body becomes null, not a blank paragraph", pr2?.body === null, JSON.stringify(pr2?.body))
+
   const issue = gh.items.find((i) => i.id === 'github:issue:7')
   check('an issue has no real branch, so one is suggested', issue?.branchExists === false)
+  check('an issue carries its body too', issue?.body === 'Resize twice in quick succession and the whole window goes blank.', issue?.body)
   check(
     'the suggestion is derived from its number and title',
     issue?.branch === 'eaon/7-crash-when-the-window-is-resized-twice',
@@ -340,6 +401,64 @@ try {
   check('it called gh pr review --approve', reviewArgv.includes('--approve'), JSON.stringify(reviewArgv))
   check('on the right number', reviewArgv.includes('1'))
   check('with the body it was given', reviewArgv.includes('Looks right to me'))
+
+  /* ---- 4b. a pull request's changeset, for the review panel ------------- */
+
+  console.log("\na pull request's changeset, for the review panel")
+  const detail = await tasks.prDetail(tmp, 1)
+  check('no error came back', !('error' in detail), JSON.stringify(detail))
+  check('the diffstat survives', detail.additions === 44 && detail.deletions === 3, JSON.stringify(detail))
+  check('base branch is included, for the "-> main" chip', detail.baseRefName === 'main', detail.baseRefName)
+  check('files keep their per-file counts and change kind', detail.files?.[0]?.changeType === 'ADDED', JSON.stringify(detail.files))
+  check(
+    'a bad PR number is reported, not thrown',
+    'error' in (await tasks.prDetail(path.join(tmp, 'no-such-folder'), 1))
+  )
+
+  const diffs = await tasks.prDiff(tmp, 1)
+  check('the added file is keyed by its own path', typeof diffs['src/main/index.ts'] === 'string', Object.keys(diffs))
+  check(
+    'its patch is the one addressed to it, not the other file',
+    diffs['src/main/index.ts']?.includes('+first file') && !diffs['src/main/index.ts']?.includes('kept line'),
+    diffs['src/main/index.ts']
+  )
+  check(
+    "a renamed file is keyed by its NEW path — the one Files lists — not the old one",
+    typeof diffs['src/renamed-to.ts'] === 'string' && diffs['src/renamed-from.ts'] === undefined,
+    Object.keys(diffs)
+  )
+  check(
+    "the renamed file's own hunk is intact",
+    diffs['src/renamed-to.ts']?.includes('+new line') && diffs['src/renamed-to.ts']?.includes('+added line'),
+    diffs['src/renamed-to.ts']
+  )
+
+  /* ---- 4c. leaving a review ----------------------------------------------- */
+
+  console.log('\nleaving a review — comment and request changes, not just approve')
+  fs.rmSync(path.join(tmp, 'review-argv'), { force: true })
+  const commented = await tasks.reviewPr(tmp, 1, 'comment', 'Left a note inline.')
+  check('a comment review reports success', commented.ok, commented.message)
+  const commentArgv = fs.readFileSync(path.join(tmp, 'review-argv'), 'utf8').split('\0').filter(Boolean)
+  check('it called gh pr review --comment', commentArgv.includes('--comment'), JSON.stringify(commentArgv))
+
+  fs.rmSync(path.join(tmp, 'review-argv'), { force: true })
+  const requested = await tasks.reviewPr(tmp, 1, 'request-changes', 'Please add a test.')
+  check('a request-changes review reports success', requested.ok, requested.message)
+  const requestArgv = fs.readFileSync(path.join(tmp, 'review-argv'), 'utf8').split('\0').filter(Boolean)
+  check(
+    'it called gh pr review --request-changes',
+    requestArgv.includes('--request-changes'),
+    JSON.stringify(requestArgv)
+  )
+
+  const emptyComment = await tasks.reviewPr(tmp, 1, 'comment', '   ')
+  check('a comment with nothing written in it is refused', emptyComment.ok === false, JSON.stringify(emptyComment))
+  check(
+    'refused before gh is ever called, not by gh itself failing',
+    emptyComment.message === 'A comment needs something written in it.',
+    emptyComment.message
+  )
 } finally {
   process.env.PATH = oldPath
   server.close()
@@ -407,6 +526,60 @@ check('cutting a brand-new branch still works', fresh.ok, fresh.error)
 check(
   'and starts from HEAD as it always did',
   fs.readFileSync(path.join(fresh.worktree.path, 'app.js'), 'utf8').includes('answer = 0')
+)
+
+/* ---- 6. promptForWorkItem, pure -------------------------------------------
+ * What an agent actually reads once `openWorkItem`'s worktree is open. No
+ * stub needed — it touches nothing but its argument — so it is bundled on
+ * its own straight from shared/tasks.ts rather than through the gh-flavoured
+ * module above.
+ */
+
+console.log("\nwhat an agent is told, once a PR's worktree is open")
+const sharedOut = path.join(tmp, 'shared-tasks.mjs')
+await build({
+  entryPoints: [path.join(root, 'src/shared/tasks.ts')],
+  outfile: sharedOut,
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  logLevel: 'silent'
+})
+const shared = await import(sharedOut)
+
+const prPrompt = shared.promptForWorkItem({
+  kind: 'pr',
+  ref: '#12',
+  title: 'Windows support',
+  body: 'Adds a Windows build.',
+  url: 'https://github.com/o/r/pull/12'
+})
+check('a PR is framed as something to review', prPrompt.startsWith('Review and address pull request #12'), prPrompt)
+check('the body is carried along', prPrompt.includes('Adds a Windows build.'), prPrompt)
+check('so is a link back, for anything the prompt could not say', prPrompt.includes('https://github.com/o/r/pull/12'), prPrompt)
+
+const issuePrompt = shared.promptForWorkItem({
+  kind: 'issue',
+  ref: '#7',
+  title: 'Crash on resize',
+  body: null,
+  url: 'https://github.com/o/r/issues/7'
+})
+check('an issue is framed as something to work on, not review', issuePrompt.startsWith('Work on issue #7'), issuePrompt)
+check('a missing body is just left out, not printed as "null"', !issuePrompt.includes('null'), issuePrompt)
+
+const longBody = 'x'.repeat(2000)
+const trimmedPrompt = shared.promptForWorkItem({
+  kind: 'pr',
+  ref: '#1',
+  title: 'Big',
+  body: longBody,
+  url: 'https://github.com/o/r/pull/1'
+})
+check(
+  "a runaway description is capped, not sent whole into the agent's prompt",
+  trimmedPrompt.length < longBody.length,
+  trimmedPrompt.length
 )
 
 /* ---- done ---------------------------------------------------------------- */

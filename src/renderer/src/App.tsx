@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useActiveWorkspace, useStore } from './store/useStore'
 import { terminals } from './lib/terminals'
 import { applyTheme, resolveTheme } from './lib/theme'
@@ -7,7 +7,10 @@ import { WorkspaceRail } from './components/WorkspaceRail'
 import { Launcher } from './components/Launcher'
 import { SetupWizard } from './components/SetupWizard'
 import { TerminalGrid } from './components/TerminalGrid'
+import { BrowserPanel } from './components/BrowserPanel'
 import { SideDock } from './components/SideDock'
+import { StagePageView } from './components/StagePageView'
+import { WorkspaceTabs } from './components/WorkspaceTabs'
 import { CommandPalette } from './components/CommandPalette'
 import { ResumeDialog } from './components/ResumeDialog'
 import { SettingsModal } from './components/SettingsModal'
@@ -22,6 +25,7 @@ import { dictation } from './lib/dictation'
 import { cancelDictation, startDictation, stopDictation, toggleDictation } from './lib/voice'
 import { announceFinished, hushSpeech } from './lib/speech'
 import { commandFor, effectiveHoldKey } from './lib/keys'
+import { useAutomationSchedule } from './lib/automation-schedule'
 
 export function App(): React.JSX.Element {
   const ready = useStore((s) => s.ready)
@@ -30,6 +34,21 @@ export function App(): React.JSX.Element {
   const railOpen = useStore((s) => s.railOpen)
   const dockOpen = useStore((s) => s.dockOpen)
   const wizard = useStore((s) => s.wizard)
+  const stagePage = useStore((s) => s.stagePage)
+  const workspacesAll = useStore((s) => s.workspaces)
+  /*
+   * Mounted for as long as they exist, not only while in front — see below.
+   *
+   * Filtered here rather than inside the selector: a selector that returns
+   * `s.workspaces.filter(...)` builds a new array on every call, zustand
+   * compares what it gets back by reference, and the store re-renders forever.
+   * That took the whole window down to its error boundary.
+   */
+  const browsers = useMemo(
+    () => workspacesAll.filter((w) => w.kind === 'browser'),
+    [workspacesAll]
+  )
+  const home = useStore((s) => s.home)
   const paletteOpen = useStore((s) => s.paletteOpen)
   const settingsOpen = useStore((s) => s.settingsOpen)
   const resumeOpen = useStore((s) => s.resumeOpen)
@@ -39,6 +58,18 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     void hydrate()
   }, [hydrate])
+
+  // Daily automations. Nothing fires until their time comes round while the
+  // app is actually watching — see useAutomationSchedule.
+  useAutomationSchedule()
+
+  // A pane's agent is whatever is running in it now, not what it was opened
+  // as. Close Codex and type `opencode` and the header's mark and name follow.
+  useEffect(() => {
+    return window.eaon.paneAgents.onChange((_e, { paneId, agentId }) => {
+      useStore.getState().setPaneAgent(paneId, agentId)
+    })
+  }, [])
 
   // ---- terminal plumbing -------------------------------------------------
   useEffect(() => {
@@ -50,7 +81,11 @@ export function App(): React.JSX.Element {
         onStatus: (paneId, status) => {
           const s = store()
           if (status === 'attention' && !s.settings.bellAttention) return
-          s.patchPane(paneId, { status })
+          // Stamped here as well as on `working` because ringing the bell is
+          // the pane changing what it is doing — an agent that stopped to ask
+          // a question has been waiting since this moment, not since the last
+          // time it went quiet.
+          s.patchPane(paneId, { status, lastActiveAt: Date.now() })
 
           if (status !== 'attention') return
           const ws = s.workspaces.find((w) => w.panes.some((p) => p.id === paneId))
@@ -67,10 +102,14 @@ export function App(): React.JSX.Element {
           })
         },
         onContext: (paneId, contextPct) => store().patchPane(paneId, { contextPct }),
-        onWorking: (paneId, working) => store().patchPane(paneId, { working }),
+        // Only ever called on a change (terminals.ts compares before it
+        // emits), so stamping the clock here costs one write per transition
+        // rather than one per tick.
+        onWorking: (paneId, working) =>
+          store().patchPane(paneId, { working, lastActiveAt: Date.now() }),
         onExit: (paneId, code) => {
           const s = store()
-          s.patchPane(paneId, { status: 'exited', working: false })
+          s.patchPane(paneId, { status: 'exited', working: false, lastActiveAt: Date.now() })
           const ws = s.workspaces.find((w) => w.panes.some((p) => p.id === paneId))
           const pane = ws?.panes.find((p) => p.id === paneId)
           if (pane && code !== 0) {
@@ -368,10 +407,16 @@ export function App(): React.JSX.Element {
     // and holds it until you close it, with the workspace rail still alongside.
     if (settingsOpen) return <SettingsModal />
     if (wizard) return <SetupWizard />
+    // A rail destination outranks the workspace: you asked to look at
+    // something, and the workspace is still there when you come back.
+    if (stagePage) return <StagePageView page={stagePage} cwd={workspace?.cwd ?? home} />
     if (!workspace) return <Launcher />
     // What the stage shows is a property of the workspace you are in, not a
     // separate mode laid over it. That is what lets the Board be somewhere you
     // switch to and back from without disturbing a single running shell.
+    // A browser workspace draws nothing here — it lives in the persistent
+    // layer below, mounted whether or not it is the tab in front.
+    if (workspace.kind === 'browser') return <></>
     if (workspace.kind === 'board') return <Board />
     if (workspace.kind === 'vault') return <Vault />
     if (workspace.kind === 'brain') return <Brain />
@@ -384,7 +429,37 @@ export function App(): React.JSX.Element {
       <TitleBar />
       <div className="body">
         {railOpen && <WorkspaceRail />}
-        <main className="stage">{stage()}</main>
+        {/*
+          The tab strip belongs to the stage, not the window: it scrolls with
+          the workspace you are in and stays clear of the rail and the dock.
+        */}
+        <div className="stage-wrap">
+          {!settingsOpen && !wizard && <WorkspaceTabs />}
+          <main className="stage">
+            {stage()}
+            {/*
+              Every browser tab stays mounted and is hidden when another tab is
+              in front. A <webview> reloads its page from scratch when it
+              re-attaches, so unmounting on every tab switch would cost you the
+              scroll position, the half-filled form, and whatever route a
+              single-page app was on. This is the same trade the side dock used
+              to make for the one browser it held.
+            */}
+            {browsers.map((w) => (
+              <div
+                key={w.id}
+                className="stage-slot"
+                hidden={settingsOpen || Boolean(wizard) || Boolean(stagePage) || w.id !== workspace?.id}
+              >
+                <BrowserPanel
+                  visible={
+                    !settingsOpen && !wizard && !stagePage && w.id === workspace?.id
+                  }
+                />
+              </div>
+            ))}
+          </main>
+        </div>
         {dockOpen && <SideDock workspace={workspace} />}
       </div>
 
