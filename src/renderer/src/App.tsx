@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useActiveWorkspace, useStore } from './store/useStore'
+import { exitReason, killedByOs } from '@shared/exit'
 import { terminals } from './lib/terminals'
 import { applyTheme, resolveTheme } from './lib/theme'
 import { TitleBar } from './components/TitleBar'
@@ -116,19 +117,40 @@ export function App(): React.JSX.Element {
         // rather than one per tick.
         onWorking: (paneId, working) =>
           store().patchPane(paneId, { working, lastActiveAt: Date.now() }),
-        onExit: (paneId, code) => {
+        onExit: (paneId, code, signal, requested) => {
           const s = store()
           s.patchPane(paneId, { status: 'exited', working: false, lastActiveAt: Date.now() })
           const ws = s.workspaces.find((w) => w.panes.some((p) => p.id === paneId))
           const pane = ws?.panes.find((p) => p.id === paneId)
-          if (pane && code !== 0) {
-            s.notify({
-              kind: 'error',
-              title: `${pane.name} exited`,
-              text: `The shell stopped with code ${code}.`,
-              paneId,
-              workspaceId: ws?.id
-            })
+          /*
+           * Not `code !== 0`. A process the kernel kills exits with code 0 and
+           * a signal, so the old test was false for exactly the case people
+           * were reporting — the session vanished and nothing was ever said
+           * about it. exitReason() is null only when the exit was asked for.
+           */
+          const reason = pane ? exitReason(code, signal, requested) : null
+          if (pane && reason) {
+            const notify = (text: string): void => {
+              s.notify({
+                kind: 'error',
+                title: killedByOs(signal, requested)
+                  ? `${pane.name} was stopped`
+                  : `${pane.name} exited`,
+                text,
+                paneId,
+                workspaceId: ws?.id
+              })
+            }
+            // The memory reading is worth waiting a tick for: it is what turns
+            // "it quit again" into something the person can do something about.
+            if (killedByOs(signal, requested)) {
+              void window.eaon.sys
+                .memory()
+                .then((room) => notify(room.note ? `${reason} ${room.note}` : reason))
+                .catch(() => notify(reason))
+            } else {
+              notify(reason)
+            }
           }
         },
         onFinished: (paneId) => {
@@ -155,7 +177,9 @@ export function App(): React.JSX.Element {
     )
 
     const offData = window.eaon.pty.onData((paneId, data) => terminals.receive(paneId, data))
-    const offExit = window.eaon.pty.onExit((paneId, code) => terminals.markExited(paneId, code))
+    const offExit = window.eaon.pty.onExit((paneId, code, signal, requested) =>
+      terminals.markExited(paneId, code, signal, requested)
+    )
     return () => {
       offData()
       offExit()

@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
+import { exitReason, killedByOs } from '@shared/exit'
 import { getTheme, type TerminalPalette } from '@shared/themes'
 import type { PaneStatus, Settings } from '@shared/types'
 import type { SshHost } from '@shared/ssh'
@@ -201,7 +202,7 @@ export interface TerminalEvents {
   onTitle: (paneId: string, title: string) => void
   onStatus: (paneId: string, status: PaneStatus) => void
   onContext: (paneId: string, pct: number) => void
-  onExit: (paneId: string, code: number) => void
+  onExit: (paneId: string, code: number, signal?: number, requested?: boolean) => void
   /** An agent worked for a while and then went quiet. `runMs` is how long. */
   onFinished: (paneId: string, runMs: number) => void
   /** Something started or stopped running in this pane. */
@@ -918,7 +919,7 @@ class TerminalRegistry {
     }
   }
 
-  markExited(paneId: string, code: number): void {
+  markExited(paneId: string, code: number, signal?: number, requested?: boolean): void {
     const rt = this.panes.get(paneId)
     if (!rt) return
     rt.spawned = false
@@ -929,8 +930,35 @@ class TerminalRegistry {
       this.events?.onWorking(paneId, false)
     }
     rt.status = 'exited'
-    rt.term.writeln(`\r\n  [session ended, exit ${code}]`)
-    this.events?.onExit(paneId, code)
+
+    /*
+     * The overlay reads lastError, so whatever is said here is what somebody
+     * sees over the dead pane instead of "This session ended."
+     */
+    const reason = exitReason(code, signal, requested)
+    rt.lastError = reason
+    rt.term.writeln(reason ? `\r\n  [${reason}]` : `\r\n  [session ended, exit ${code}]`)
+
+    /*
+     * Say how tight the machine actually was. The overlay has already been
+     * painted by then, but the terminal is live and this is the number that
+     * tells somebody whether to close something — and it is the difference
+     * between "my app keeps crashing" and "my machine is full".
+     */
+    if (killedByOs(signal, requested)) {
+      void window.eaon.sys
+        .memory()
+        .then((room) => {
+          if (room.note && this.panes.get(paneId) === rt) {
+            rt.term.writeln(`  [${room.note} Closing something else will make room.]`)
+          }
+        })
+        .catch(() => {
+          /* the reading is a courtesy; the reason above stands without it */
+        })
+    }
+
+    this.events?.onExit(paneId, code, signal, requested)
   }
 
   /**

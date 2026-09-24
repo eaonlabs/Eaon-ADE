@@ -71,9 +71,20 @@ const api = {
       ipcRenderer.on('pty:data', handler)
       return () => ipcRenderer.removeListener('pty:data', handler)
     },
-    onExit: (cb: (paneId: string, exitCode: number) => void): (() => void) => {
-      const handler = (_e: unknown, p: { paneId: string; exitCode: number }): void =>
-        cb(p.paneId, p.exitCode)
+    /*
+     * `signal` is carried across deliberately. The main process has always
+     * emitted it and this bridge used to drop it, which made an OOM kill
+     * (exit code 0, signal 9) indistinguishable from a clean exit — so a
+     * session the kernel had shot looked to the renderer like one that had
+     * simply finished, and the pane went quiet with nothing to show.
+     */
+    onExit: (
+      cb: (paneId: string, exitCode: number, signal?: number, requested?: boolean) => void
+    ): (() => void) => {
+      const handler = (
+        _e: unknown,
+        p: { paneId: string; exitCode: number; signal?: number; requested?: boolean }
+      ): void => cb(p.paneId, p.exitCode, p.signal, p.requested)
       ipcRenderer.on('pty:exit', handler)
       return () => ipcRenderer.removeListener('pty:exit', handler)
     }

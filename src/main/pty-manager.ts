@@ -395,6 +395,23 @@ export class PtyManager {
 
       proc.onExit(({ exitCode, signal }) => {
         try {
+          /*
+           * Read before the assignment below, because it is the answer to
+           * "did anybody ask for this?".
+           *
+           * kill() clears `alive` synchronously and only then signals, and
+           * every teardown in the app goes through it — stopping a pane,
+           * closing a workspace, killAll(), shutdown(), and spawn() clearing a
+           * slot before it reuses it. So `alive` still being true here means
+           * nothing in the app asked: the shell exited on its own, or
+           * something outside ended it.
+           *
+           * Without this the renderer could not tell the two apart, and it
+           * showed the same error for a session somebody deliberately stopped
+           * as for one the kernel killed — which is a good way to teach people
+           * to ignore the message that matters.
+           */
+          const requested = !session.alive
           session.alive = false
           if (session.timer) {
             clearTimeout(session.timer)
@@ -408,7 +425,7 @@ export class PtyManager {
           session.buffer.length = 0
           session.buffered = 0
           if (tail) this.emit('pty:data', { paneId: req.paneId, data: tail })
-          this.emit('pty:exit', { paneId: req.paneId, exitCode, signal })
+          this.emit('pty:exit', { paneId: req.paneId, exitCode, signal, requested })
         } catch {
           /* never let this reach node-pty's thread-safe function */
         } finally {

@@ -154,6 +154,69 @@ check('one with room is not refused', pressureFor(4096, 8192, 12288) === 'ok')
 check('the tight middle is neither', pressureFor(800, 2000, 4096) === 'tight',
   pressureFor(800, 2000, 4096))
 
+/* ---- saying why a session went ---------------------------------------- */
+
+const reasonOut = path.join(cache, 'exit.mjs')
+await build({
+  entryPoints: [path.join(root, 'src/shared/exit.ts')],
+  outfile: reasonOut,
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  logLevel: 'silent'
+})
+const { exitReason, killedByOs } = await import(reasonOut)
+
+console.log('\nexplaining the exit')
+
+/*
+ * The whole of the "session unexpectedly quit" report. An out-of-memory kill
+ * arrives as exit code 0 with signal 9 — a *zero* exit code — so every test
+ * the app had was false and the pane went quiet with nothing said. If this
+ * assertion ever goes back to null, the silence comes back with it.
+ */
+check(
+  'an out-of-memory kill is explained, not read as a clean exit',
+  exitReason(0, 9) === 'The system stopped this agent to reclaim memory.',
+  String(exitReason(0, 9))
+)
+check('and it is named as the system doing it', killedByOs(9) === true)
+
+/*
+ * The app's own stop path. Measured: a shell stopped through kill() on macOS
+ * comes back as exit code *1*, not a signal, so nothing about the exit itself
+ * says it was wanted — only `requested` does. Without it every stop somebody
+ * pressed raised an error about the session they had just closed, which is how
+ * a real warning gets trained into background noise.
+ */
+check('a stop somebody asked for says nothing', exitReason(1, 0, true) === null,
+  String(exitReason(1, 0, true)))
+check('even when it took a SIGKILL to finish', exitReason(0, 9, true) === null,
+  String(exitReason(0, 9, true)))
+check('and it is not blamed on the system', killedByOs(9, true) === false)
+check('a shell that was told to exit says nothing', exitReason(0) === null, String(exitReason(0)))
+check('and that is not the system either', killedByOs(undefined) === false)
+
+// A non-zero code still reports, as it always did.
+check('a bad exit code still reports', exitReason(127) === 'The shell stopped with code 127.',
+  String(exitReason(127)))
+// An agent that came apart is not the same thing as a machine that is full.
+check('a crash is told apart from a kill', exitReason(0, 11) === 'This agent stopped on a segmentation fault.',
+  String(exitReason(0, 11)))
+
+/* ---- and the bridge actually carries the signal ------------------------ */
+
+/*
+ * Asserted against the preload source because that is where it was lost: the
+ * main process emitted { paneId, exitCode, signal } and the bridge destructured
+ * only the first two, so the renderer could never have known.
+ */
+const preload = fs.readFileSync(path.join(root, 'src/preload/index.ts'), 'utf8')
+const bridge = preload.slice(preload.indexOf('onExit:'), preload.indexOf('onExit:') + 400)
+check('the preload passes the exit signal through', /signal/.test(bridge))
+const manager = fs.readFileSync(path.join(root, 'src/main/pty-manager.ts'), 'utf8')
+check("and the main process still sends it", /emit\('pty:exit',[^)]*signal/.test(manager))
+
 /* ---- clean up --------------------------------------------------------- */
 
 ptys.killAll()
