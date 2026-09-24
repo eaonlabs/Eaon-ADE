@@ -120,6 +120,40 @@ check('kill ends the shell', pid3 === null || !alive(pid3), `pid ${pid3} still a
 const fresh = ptys.spawn({ paneId: PANE, cwd: tmp, cols: 80, rows: 24 })
 check('and the pane can be started again afterwards', fresh.ok === true && fresh.reattached !== true)
 
+/* ---- the refusal that was reported ------------------------------------- */
+
+console.log('\nrefusing to start one more')
+
+const memOut = path.join(cache, 'memory.mjs')
+await build({
+  entryPoints: [path.join(root, 'src/main/memory.ts')],
+  outfile: memOut,
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  logLevel: 'silent',
+  external: ['electron']
+})
+const { pressureFor } = await import(memOut)
+
+/*
+ * The numbers off a real machine that had just lost sessions: 133 MB of RAM
+ * free with 864 MB left of 2048 MB of swap, eighteen agents holding 4.6 GB
+ * between them. Starting a nineteenth is what the kernel answers by killing
+ * one of the eighteen, so the app refuses instead — and the refusal has to
+ * keep working, because the alternative is losing work somebody is doing.
+ */
+check(
+  'a machine with 133 MB free and 864 MB of swap is refused',
+  pressureFor(133, 864, 2048) === 'critical',
+  pressureFor(133, 864, 2048)
+)
+// Still comfortable: refusing here would be refusing on a healthy machine.
+check('one with room is not refused', pressureFor(4096, 8192, 12288) === 'ok')
+// The shape in between, where it is worth saying something but not refusing.
+check('the tight middle is neither', pressureFor(800, 2000, 4096) === 'tight',
+  pressureFor(800, 2000, 4096))
+
 /* ---- clean up --------------------------------------------------------- */
 
 ptys.killAll()

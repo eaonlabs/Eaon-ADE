@@ -396,6 +396,17 @@
 .pane-overlay-msg {
   font-size: var(--fs-sm);
   color: var(--text-mid);
+  /*
+   * Now carries the reason a shell would not start, which is a sentence and
+   * not two words — so it has to wrap, stay inside a narrow pane, and read as
+   * prose rather than one long line trailing off the edge.
+   */
+  max-width: 44ch;
+  margin: 0 auto;
+  padding: 0 16px;
+  text-align: center;
+  line-height: 1.5;
+  text-wrap: pretty;
 }
 
 .pane-menu {

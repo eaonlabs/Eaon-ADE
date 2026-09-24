@@ -535,7 +535,17 @@ export function TerminalPane({
 
       {pane.status === 'exited' && (
         <div className="pane-overlay">
-          <p className="pane-overlay-msg">This session ended.</p>
+          {/*
+            The reason, when there is one, instead of a bare "it ended".
+            This overlay covers the terminal, so a refusal printed into the
+            pane — "not enough memory to start another agent", and what to do
+            about it — was sitting underneath the one message that told you
+            nothing. Whatever the shell said on its way out is still in the
+            scrollback behind this.
+          */}
+          <p className="pane-overlay-msg">
+            {terminals.lastError(pane.id) ?? 'This session ended.'}
+          </p>
           <button className="btn" onClick={() => restartPane(pane.id)}>
             <RotateCw size={14} />
             Start it again

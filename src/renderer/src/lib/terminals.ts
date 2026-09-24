@@ -246,6 +246,8 @@ interface Runtime {
   spawned: boolean
   /** GPU renderer, or null when this pane fell back to the DOM one. */
   webgl: WebglAddon | null
+  /** Why the last spawn was refused, for the pane to show. */
+  lastError: string | null
   /** How many times we have tried to get this pane back onto the GPU. */
   renderRetries: number
   /**
@@ -565,6 +567,7 @@ class TerminalRegistry {
       contextPct: null,
       spawned: false,
       webgl: null,
+      lastError: null,
       renderRetries: 0,
       gpuBlocked: false,
       disposers: []
@@ -827,11 +830,27 @@ class TerminalRegistry {
       host: launch.host
     })
     if (!res.ok) {
-      rt.spawned = false
+      /*
+       * `spawned` deliberately stays true.
+       *
+       * Resetting it looked like the tidy thing — the shell did not start, so
+       * the pane has not spawned — but the effect that calls this runs again
+       * on every attach, and a pane re-attaches whenever you switch back to
+       * its workspace or it re-renders. So a refusal turned into a retry
+       * every time you looked at it: another failed spawn, another copy of
+       * the message down the pane, and another trip through the memory probe.
+       *
+       * The refusal that matters is the one for being out of memory, which is
+       * exactly when the machine can least afford a pane quietly asking again
+       * whenever it is shown. Restarting is a thing you ask for — `restart()`
+       * builds a fresh runtime, so the button in the pane still works.
+       */
+      rt.lastError = res.error ?? 'The shell could not be started.'
       rt.term.writeln(`\r\n  Could not start a shell here.\r\n  ${res.error ?? ''}\r\n`)
       this.events?.onStatus(paneId, 'exited')
       return
     }
+    rt.lastError = null
     /*
      * The shell was already running and we were given it back, rather than a
      * fresh one — the window went away and this one did not. Say so, because
@@ -1019,6 +1038,17 @@ class TerminalRegistry {
       rt.sentRows = 0
       this.fit(id)
     }
+  }
+
+  /**
+   * Why this pane's shell would not start, if that is why it is not running.
+   *
+   * The overlay a stopped pane shows sits on top of the terminal, so the line
+   * explaining the refusal was behind it — the one piece of text that said
+   * what to do about it was the one piece you could not read.
+   */
+  lastError(paneId: string): string | null {
+    return this.panes.get(paneId)?.lastError ?? null
   }
 
   currentSettings(): Settings | null {
