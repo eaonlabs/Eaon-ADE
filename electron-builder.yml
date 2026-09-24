@@ -5,7 +5,7 @@ productName: Eaon ADE
 # next to the artifacts from this, which is the file electron-updater reads.
 publish:
   provider: github
-  owner: sanscreates
+  owner: eaonlabs
   repo: Eaon-ADE
   releaseType: release
 directories:
